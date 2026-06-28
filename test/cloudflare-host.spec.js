@@ -1,46 +1,65 @@
 import { describe, it, expect } from 'vitest';
 import {
-  isCloudflareDelegatable,
+  normalizeNameservers,
+  isCloudflareNameserver,
+  isCloudflareDelegated,
   getCloudflareHostInfo,
 } from '../src/index.js';
 
-describe('isCloudflareDelegatable', () => {
-  it('matches known PSL suffixes', () => {
-    expect(isCloudflareDelegatable('foo.de5.net')).toBe(true);
-    expect(isCloudflareDelegatable('rando.cc.cd')).toBe(true);
-    expect(isCloudflareDelegatable('onlydev.ccwu.cc')).toBe(true);
-    expect(isCloudflareDelegatable('bar.us.ci')).toBe(true);
-    expect(isCloudflareDelegatable('yourproject.indevs.in')).toBe(true);
-    expect(isCloudflareDelegatable('x.eu.cc')).toBe(true);
+describe('isCloudflareNameserver', () => {
+  it('detects Cloudflare NS hostnames', () => {
+    expect(isCloudflareNameserver('henry.ns.cloudflare.com')).toBe(true);
+    expect(isCloudflareNameserver('natasha.ns.cloudflare.com')).toBe(true);
   });
 
-  it('does not match unsupported DNSHE suffixes', () => {
-    expect(isCloudflareDelegatable('cpe.ddns.ge')).toBe(false);
-    expect(isCloudflareDelegatable('vibecode.bbroot.com')).toBe(false);
-    expect(isCloudflareDelegatable('foo.bot.cd')).toBe(false);
+  it('rejects non-Cloudflare NS hostnames', () => {
+    expect(isCloudflareNameserver('ns1.dnshe.com')).toBe(false);
+    expect(isCloudflareNameserver('ns2.dnshe.org')).toBe(false);
+  });
+});
+
+describe('isCloudflareDelegated', () => {
+  it('returns true when Cloudflare NS is present', () => {
+    expect(isCloudflareDelegated({
+      nameservers: ['henry.ns.cloudflare.com', 'natasha.ns.cloudflare.com'],
+    })).toBe(true);
+  });
+
+  it('returns true when zone id is present', () => {
+    expect(isCloudflareDelegated({ cloudflareZoneId: 'zone123' })).toBe(true);
+  });
+
+  it('returns false for DNSHE-only nameservers', () => {
+    expect(isCloudflareDelegated({
+      nameservers: ['ns1.dnshe.com', 'ns2.dnshe.com'],
+    })).toBe(false);
   });
 });
 
 describe('getCloudflareHostInfo', () => {
-  it('shows delegated when zone id exists', () => {
-    const info = getCloudflareHostInfo('rando.cc.cd', 'zone123');
-    expect(info.status).toBe('delegated');
-    expect(info.label).toBe('已托管 CF');
+  it('shows badge only when delegated via NS', () => {
+    const info = getCloudflareHostInfo({
+      nameservers: ['henry.ns.cloudflare.com', 'natasha.ns.cloudflare.com'],
+    });
+    expect(info?.label).toBe('已托管 CF');
+    expect(info?.title).toContain('henry.ns.cloudflare.com');
   });
 
-  it('shows supported for delegatable suffix without zone id', () => {
-    const info = getCloudflareHostInfo('rando.cc.cd', '');
-    expect(info.status).toBe('supported');
-    expect(info.label).toBe('可托管 CF');
+  it('returns null when suffix is delegatable but NS is not Cloudflare', () => {
+    expect(getCloudflareHostInfo({
+      name: 'rando.cc.cd',
+      nameservers: ['ns1.dnshe.com'],
+    })).toBe(null);
   });
 
-  it('shows dnshe_only for non-delegatable DNSHE suffix', () => {
-    const info = getCloudflareHostInfo('cpe.ddns.ge', '');
-    expect(info.status).toBe('dnshe_only');
-    expect(info.label).toBe('仅 DNSHE');
+  it('returns null without Cloudflare NS', () => {
+    expect(getCloudflareHostInfo({ nameservers: [] })).toBe(null);
   });
+});
 
-  it('returns null for regular domains', () => {
-    expect(getCloudflareHostInfo('example.com', '')).toBe(null);
+describe('normalizeNameservers', () => {
+  it('lowercases and deduplicates', () => {
+    expect(normalizeNameservers(['Henry.NS.cloudflare.com', 'henry.ns.cloudflare.com']))
+      .toEqual(['henry.ns.cloudflare.com']);
   });
 });

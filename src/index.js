@@ -160,46 +160,47 @@ const CLOUDFLARE_DELEGATABLE_SUFFIXES = [
   '.eu.cc', '.uk.cc', '.us.cc', '.gu.cc', '.ec.cc',
 ];
 
+export function normalizeNameservers(nameservers) {
+  if (!Array.isArray(nameservers)) return [];
+  return [...new Set(
+    nameservers
+      .map((ns) => String(ns || '').trim().toLowerCase())
+      .filter(Boolean),
+  )];
+}
+
+export function isCloudflareNameserver(ns) {
+  const lower = String(ns || '').trim().toLowerCase();
+  return lower.endsWith('.ns.cloudflare.com') || lower.endsWith('.cloudflare.com');
+}
+
+export function isCloudflareDelegated(meta) {
+  const zoneId = String(meta?.cloudflareZoneId || '').trim();
+  if (zoneId) return true;
+  return normalizeNameservers(meta?.nameservers).some(isCloudflareNameserver);
+}
+
+export function getCloudflareHostInfo(meta) {
+  if (!isCloudflareDelegated(meta)) return null;
+  const nameservers = normalizeNameservers(meta?.nameservers).filter(isCloudflareNameserver);
+  const zoneId = String(meta?.cloudflareZoneId || '').trim();
+  const nsText = nameservers.join(', ');
+  return {
+    status: 'delegated',
+    label: '已托管 CF',
+    badgeClass: 'bg-success',
+    title: nsText ? ('DNS 服务器: ' + nsText) : 'NS 已指向 Cloudflare',
+  };
+}
+
 export function isCloudflareDelegatable(domainName) {
   const lower = (domainName || '').toLowerCase();
   return CLOUDFLARE_DELEGATABLE_SUFFIXES.some((suffix) => lower.endsWith(suffix));
 }
 
-export function getCloudflareHostInfo(domainName, cloudflareZoneId) {
-  const zoneId = String(cloudflareZoneId || '').trim();
-  if (zoneId) {
-    return {
-      status: 'delegated',
-      label: '已托管 CF',
-      badgeClass: 'bg-success',
-      title: 'NS 已指向 Cloudflare（Zone ID: ' + zoneId + '）',
-    };
-  }
-  if (isCloudflareDelegatable(domainName)) {
-    return {
-      status: 'supported',
-      label: '可托管 CF',
-      badgeClass: 'bg-info',
-      title: '该后缀支持在 Cloudflare 添加站点并修改 NS 托管',
-    };
-  }
-  if (isDnsheDomain(domainName)) {
-    return {
-      status: 'dnshe_only',
-      label: '仅 DNSHE',
-      badgeClass: 'bg-secondary',
-      title: '该 DNSHE 后缀暂不支持 NS 托管到 Cloudflare，请使用 DNSHE 面板解析',
-    };
-  }
-  if (isStackryzeDomain(domainName)) {
-    return {
-      status: 'provider_dns',
-      label: '平台解析',
-      badgeClass: 'bg-secondary',
-      title: '请使用 Stackryze 面板管理 DNS',
-    };
-  }
-  return null;
+export function sanitizeNameservers(nameservers) {
+  const normalized = normalizeNameservers(nameservers);
+  return normalized.length ? normalized : undefined;
 }
 
 export function isStackryzeDomain(domainName) {
@@ -1248,6 +1249,7 @@ export function mapDnsheSubdomainToDomainData(sub, renewLinks, categoryId = 'def
   if (!name || !registrationDate || !expiryDate) return null;
 
   const cloudflareZoneId = String(sub.cloudflare_zone_id || '').trim();
+  const nameservers = normalizeNameservers(sub.name_servers || sub.nameservers || []);
   const record = {
     name,
     registrationDate,
@@ -1264,7 +1266,28 @@ export function mapDnsheSubdomainToDomainData(sub, renewLinks, categoryId = 'def
     notifySettings: { useGlobalSettings: true, notifyDays: 30, enabled: true },
   };
   if (cloudflareZoneId) record.cloudflareZoneId = cloudflareZoneId;
+  if (nameservers.length) record.nameservers = nameservers;
   return record;
+}
+
+async function fetchDnsheWhoisNameservers(domain) {
+  try {
+    const result = await queryDnsheWhois(domain);
+    if (result.success && result.nameservers?.length) {
+      return normalizeNameservers(result.nameservers);
+    }
+  } catch (error) {
+    // 忽略单个域名 WHOIS 失败
+  }
+  return [];
+}
+
+async function resolveDnsheSubdomainNameservers(sub) {
+  const fromList = normalizeNameservers(sub.name_servers || sub.nameservers || []);
+  if (fromList.length) return fromList;
+  const name = getDnsheSubdomainFullName(sub);
+  if (!name) return [];
+  return fetchDnsheWhoisNameservers(name);
 }
 
 async function fetchAllDnsheSubdomains() {
@@ -1293,14 +1316,16 @@ async function previewDnsheImport() {
   const existing = await getDomains();
   const existingNames = new Set(existing.map((d) => String(d.name || '').toLowerCase()));
 
-  return subs.map((sub) => {
+  const items = [];
+  for (const sub of subs) {
     const name = getDnsheSubdomainFullName(sub);
     const registrationDate = sub.created_at ? formatDate(sub.created_at) : '';
     const expiryDate = sub.expires_at ? formatDate(sub.expires_at) : '';
     const alreadyExists = existingNames.has(name);
     const cloudflareZoneId = String(sub.cloudflare_zone_id || '').trim();
-    const cloudflare = getCloudflareHostInfo(name, cloudflareZoneId);
-    return {
+    const nameservers = await resolveDnsheSubdomainNameservers(sub);
+    const cloudflare = getCloudflareHostInfo({ cloudflareZoneId, nameservers });
+    items.push({
       name,
       status: sub.status || '',
       registrationDate,
@@ -1308,35 +1333,51 @@ async function previewDnsheImport() {
       alreadyExists,
       importable: !!name && !!registrationDate && !!expiryDate && !alreadyExists,
       cloudflareZoneId: cloudflareZoneId || null,
+      nameservers,
       cloudflare,
-    };
-  }).filter((item) => item.name);
+    });
+  }
+  return items.filter((item) => item.name);
 }
 
-async function refreshDnsheCloudflareZonesInStorage() {
+async function syncDnsheDomainMetadata() {
   const subs = await fetchAllDnsheSubdomains();
-  const zoneByName = new Map();
+  if (!subs.length) return 0;
+
+  const domains = await getDomains();
+  const domainByName = new Map(domains.map((d) => [normalizeDomainName(d.name), d]));
+  let updated = 0;
+
   for (const sub of subs) {
     const name = getDnsheSubdomainFullName(sub);
     if (!name) continue;
-    zoneByName.set(name, String(sub.cloudflare_zone_id || '').trim() || null);
-  }
-  if (!zoneByName.size) return 0;
+    const domain = domainByName.get(name);
+    if (!domain) continue;
 
-  const domains = await getDomains();
-  let updated = 0;
-  for (const domain of domains) {
-    const key = normalizeDomainName(domain.name);
-    if (!zoneByName.has(key)) continue;
-    const zoneId = zoneByName.get(key);
-    const prev = domain.cloudflareZoneId ? String(domain.cloudflareZoneId).trim() : '';
-    const next = zoneId || '';
-    if (prev !== next) {
-      if (next) domain.cloudflareZoneId = next;
-      else delete domain.cloudflareZoneId;
-      updated++;
+    const zoneId = String(sub.cloudflare_zone_id || '').trim();
+    const nameservers = await resolveDnsheSubdomainNameservers(sub);
+    let changed = false;
+
+    const prevZone = domain.cloudflareZoneId ? String(domain.cloudflareZoneId).trim() : '';
+    if (zoneId && prevZone !== zoneId) {
+      domain.cloudflareZoneId = zoneId;
+      changed = true;
+    } else if (!zoneId && domain.cloudflareZoneId) {
+      delete domain.cloudflareZoneId;
+      changed = true;
     }
+
+    const prevNs = JSON.stringify(normalizeNameservers(domain.nameservers || []));
+    const nextNs = JSON.stringify(nameservers);
+    if (prevNs !== nextNs) {
+      if (nameservers.length) domain.nameservers = nameservers;
+      else delete domain.nameservers;
+      changed = true;
+    }
+
+    if (changed) updated++;
   }
+
   if (updated) {
     await DOMAIN_MONITOR.put('domains', JSON.stringify(domains));
   }
@@ -1387,6 +1428,9 @@ async function importDnsheDomains({ names = null, skipExisting = true } = {}) {
       failed.push({ name, reason: '缺少注册或到期日期' });
       continue;
     }
+
+    const nameservers = await resolveDnsheSubdomainNameservers(sub);
+    if (nameservers.length) data.nameservers = nameservers;
 
     data.id = crypto.randomUUID();
     data.createdAt = new Date().toISOString();
@@ -4610,7 +4654,11 @@ const getHTMLContent = (title) => `
                 tbody.innerHTML = dnsheImportItems.map(function(item, index) {
                     const note = item.alreadyExists ? '已存在' : (item.importable ? '可导入' : '信息不完整');
                     const disabled = !item.importable;
-                    const cf = item.cloudflare || getCloudflareHostInfoFrontend(item.name, item.cloudflareZoneId);
+                    const cf = item.cloudflare || getCloudflareHostInfoFrontend({
+                        name: item.name,
+                        cloudflareZoneId: item.cloudflareZoneId,
+                        nameservers: item.nameservers || [],
+                    });
                     const cfLabel = cf && cf.label ? cf.label : '-';
                     return '<tr>' +
                         '<td><input type="checkbox" class="form-check-input dnshe-import-check" data-index="' + index + '"' +
@@ -5332,30 +5380,26 @@ const getHTMLContent = (title) => `
                 lower.endsWith('.ddns.ge');
         }
 
-        // keep in sync: isCloudflareDelegatable / getCloudflareHostInfo / CLOUDFLARE_DELEGATABLE_SUFFIXES (backend exports)
-        function isCloudflareDelegatableFrontend(name) {
-            const lower = (name || '').toLowerCase();
-            return lower.endsWith('.de5.net') || lower.endsWith('.cc.cd') || lower.endsWith('.ccwu.cc') ||
-                lower.endsWith('.us.ci') || lower.endsWith('.indevs.in') ||
-                lower.endsWith('.eu.cc') || lower.endsWith('.uk.cc') || lower.endsWith('.us.cc') ||
-                lower.endsWith('.gu.cc') || lower.endsWith('.ec.cc');
+        // keep in sync: normalizeNameservers / isCloudflareNameserver / isCloudflareDelegated / getCloudflareHostInfo (backend exports)
+        function isCloudflareNameserverFrontend(ns) {
+            const lower = String(ns || '').trim().toLowerCase();
+            return lower.endsWith('.ns.cloudflare.com') || lower.endsWith('.cloudflare.com');
         }
 
-        function getCloudflareHostInfoFrontend(name, cloudflareZoneId) {
-            const zoneId = cloudflareZoneId != null ? String(cloudflareZoneId).trim() : '';
-            if (zoneId) {
-                return { status: 'delegated', label: '已托管 CF', badgeClass: 'bg-success', title: 'NS 已指向 Cloudflare' };
-            }
-            if (isCloudflareDelegatableFrontend(name)) {
-                return { status: 'supported', label: '可托管 CF', badgeClass: 'bg-info', title: '该后缀支持在 Cloudflare 添加站点并修改 NS 托管' };
-            }
-            if (isDnsheDomainFrontend(name)) {
-                return { status: 'dnshe_only', label: '仅 DNSHE', badgeClass: 'bg-secondary', title: '该 DNSHE 后缀暂不支持 NS 托管到 Cloudflare' };
-            }
-            if (isStackryzeDomainFrontend(name)) {
-                return { status: 'provider_dns', label: '平台解析', badgeClass: 'bg-secondary', title: '请使用 Stackryze 面板管理 DNS' };
-            }
-            return null;
+        function getCloudflareHostInfoFrontend(domain) {
+            if (!domain) return null;
+            const zoneId = domain.cloudflareZoneId != null ? String(domain.cloudflareZoneId).trim() : '';
+            const nameservers = Array.isArray(domain.nameservers) ? domain.nameservers : [];
+            const delegated = zoneId || nameservers.some(isCloudflareNameserverFrontend);
+            if (!delegated) return null;
+            const cfNs = nameservers.filter(isCloudflareNameserverFrontend);
+            const nsText = cfNs.join(', ');
+            return {
+                status: 'delegated',
+                label: '已托管 CF',
+                badgeClass: 'bg-success',
+                title: nsText ? ('DNS 服务器: ' + nsText) : 'NS 已指向 Cloudflare',
+            };
         }
 
         function renderCloudflareBadgeHtml(info) {
@@ -5882,7 +5926,7 @@ const getHTMLContent = (title) => `
                         ? '<a href="' + escapeHtml(safeRenewLink) + '" target="_blank" rel="noopener noreferrer" class="btn btn-sm btn-warning" title="' + escapeHtml(renewBtnTitle) + '"><i class="iconfont icon-link"></i> 链接</a>'
                         : '<button class="btn btn-sm btn-secondary" disabled title="' + escapeHtml(renewBtnTitle) + '"><i class="iconfont icon-link"></i> 链接</button>';
 
-                    const cloudflareInfo = getCloudflareHostInfoFrontend(domain.name, domain.cloudflareZoneId);
+                    const cloudflareInfo = getCloudflareHostInfoFrontend(domain);
                     const cloudflareBadgeHtml = renderCloudflareBadgeHtml(cloudflareInfo);
                     const cloudflareDetailHtml = cloudflareInfo
                         ? '<p class="card-text mb-1 text-nowrap" style="overflow: hidden; text-overflow: ellipsis;"><i class="iconfont icon-earth-full"></i><strong>Cloudflare:</strong> ' +
@@ -6194,6 +6238,9 @@ const getHTMLContent = (title) => `
                 price: priceObj,
                 notifySettings: notifySettings
             };
+            if (pendingWhoisNameservers && pendingWhoisNameservers.length) {
+                domainData.nameservers = pendingWhoisNameservers;
+            }
                     
                     try {
                         let response;
@@ -6269,6 +6316,7 @@ const getHTMLContent = (title) => `
                     if (!domain) return;
 
                     categoryManuallyChanged = false;
+                    pendingWhoisNameservers = Array.isArray(domain.nameservers) ? domain.nameservers.slice() : null;
                     
                     document.getElementById('domainId').value = domain.id;
                     document.getElementById('domainName').value = domain.name;
@@ -6446,6 +6494,7 @@ const getHTMLContent = (title) => `
                     document.getElementById('registeredAccount').value = '';
                     updateCategorySelect(categories, 'default');
                     categoryManuallyChanged = false;
+                    pendingWhoisNameservers = null;
                     document.getElementById('customNote').value = '';
                     document.getElementById('noteColor').value = 'tag-blue'; // 重置为默认蓝色
                     document.getElementById('renewLink').value = '';
@@ -6500,6 +6549,7 @@ const getHTMLContent = (title) => `
                 // 全局变量存储分类数据
                 let categories = [];
                 let categoryManuallyChanged = false;
+                let pendingWhoisNameservers = null;
 
                 // 按注册厂商确保分类存在并选中（不存在则自动创建）
                 async function ensureCategoryForRegistrar(registrarName) {
@@ -7038,6 +7088,12 @@ const getHTMLContent = (title) => `
                     } else {
                         missingFields.push('到期日期');
                     }
+
+                    if (whoisData.nameservers && whoisData.nameservers.length) {
+                        pendingWhoisNameservers = whoisData.nameservers.map(function(ns) {
+                            return String(ns || '').trim().toLowerCase();
+                        }).filter(Boolean);
+                    }
                     
                     // 自动计算续期周期（仅当有注册日期和到期日期时）
                     if (whoisData.registrationDate && whoisData.expiryDate) {
@@ -7454,7 +7510,7 @@ async function handleApiRequest(request) {
   // DNSHE 域名列表预览（用于一键导入）
   if (path === '/api/dnshe/domains' && request.method === 'GET') {
     try {
-      await refreshDnsheCloudflareZonesInStorage();
+      await syncDnsheDomainMetadata();
       const domains = await previewDnsheImport();
       const importable = domains.filter((item) => item.importable).length;
       return jsonResponse({ success: true, domains, total: domains.length, importable });
@@ -7471,7 +7527,7 @@ async function handleApiRequest(request) {
         names: Array.isArray(body.names) ? body.names : null,
         skipExisting: body.skipExisting !== false,
       });
-      await refreshDnsheCloudflareZonesInStorage();
+      await syncDnsheDomainMetadata();
       return jsonResponse(result);
     } catch (error) {
       return jsonResponse({ success: false, error: error.message || 'DNSHE 导入失败' }, 400);
@@ -7800,6 +7856,10 @@ async function addDomain(domainData) {
   domainData.name = assertDomainNameAvailable(domains, domainData.name);
   domainData.id = crypto.randomUUID();
 
+  const nameservers = sanitizeNameservers(domainData.nameservers);
+  if (nameservers) domainData.nameservers = nameservers;
+  else delete domainData.nameservers;
+
   // 添加创建时间
   domainData.createdAt = new Date().toISOString();
 
@@ -7849,7 +7909,11 @@ async function updateDomain(id, domainData) {
   }
 
   domainData.name = assertDomainNameAvailable(domains, domainData.name, id);
-  
+
+  const nameservers = domainData.nameservers !== undefined
+    ? sanitizeNameservers(domainData.nameservers)
+    : domains[index].nameservers;
+
   // 确保通知设置正确
   let notifySettings;
   if (domainData.notifySettings) {
@@ -7886,6 +7950,7 @@ async function updateDomain(id, domainData) {
     customNote: domainData.customNote !== undefined ? domainData.customNote : domains[index].customNote, // 正确处理空字符串
     noteColor: domainData.noteColor !== undefined ? domainData.noteColor : domains[index].noteColor, // 添加备注颜色处理
     renewLink: domainData.renewLink !== undefined ? domainData.renewLink : domains[index].renewLink, // 正确处理空字符串
+    nameservers: nameservers,
     renewCycle: sanitizedRenewCycle,
     price: sanitizedPrice,
     lastRenewed: domainData.lastRenewed !== undefined ? domainData.lastRenewed : domains[index].lastRenewed, // 根据用户选择更新续期时间
@@ -7953,6 +8018,15 @@ async function syncDomainExpiry(id) {
   const syncResult = applyExpirySyncFromWhois(domains[index], result.expiryDate, now);
 
   if (!syncResult.changed) {
+    if (result.nameservers?.length) {
+      const ns = sanitizeNameservers(result.nameservers);
+      const prev = JSON.stringify(normalizeNameservers(domains[index].nameservers || []));
+      if (JSON.stringify(ns || []) !== prev) {
+        if (ns) domains[index].nameservers = ns;
+        else delete domains[index].nameservers;
+        await DOMAIN_MONITOR.put('domains', JSON.stringify(domains));
+      }
+    }
     return {
       ...domains[index],
       unchanged: true,
@@ -7962,6 +8036,9 @@ async function syncDomainExpiry(id) {
   }
 
   domains[index] = syncResult.updated;
+  if (result.nameservers?.length) {
+    domains[index].nameservers = sanitizeNameservers(result.nameservers);
+  }
   await DOMAIN_MONITOR.put('domains', JSON.stringify(domains));
 
   return {
