@@ -5,6 +5,8 @@ import {
   resolveRenewWindowDays,
   resolveDefaultRenewLinks,
   parseDnsheApiJsonBody,
+  getDnsheSubdomainFullName,
+  mapDnsheSubdomainToDomainData,
 } from '../src/index.js';
 
 describe('isDnsheDomain', () => {
@@ -15,6 +17,7 @@ describe('isDnsheDomain', () => {
     expect(isDnsheDomain('baz.onlydev.cc')).toBe(true);
     expect(isDnsheDomain('x.us.ci')).toBe(true);
     expect(isDnsheDomain('y.cn.mt')).toBe(true);
+    expect(isDnsheDomain('cpe.ddns.ge')).toBe(true);
   });
 
   it('does not match unrelated domains', () => {
@@ -52,5 +55,28 @@ describe('parseDnsheApiJsonBody', () => {
     const parsed = parseDnsheApiJsonBody('{"success":true,"domain":"foo.cc.cd"}');
     expect(parsed.ok).toBe(true);
     expect(parsed.data.domain).toBe('foo.cc.cd');
+  });
+});
+
+describe('DNSHE import helpers', () => {
+  it('builds full domain name from subdomain payload', () => {
+    expect(getDnsheSubdomainFullName({ full_domain: 'Rando.CC.cd' })).toBe('rando.cc.cd');
+    expect(getDnsheSubdomainFullName({ subdomain: 'cpe', rootdomain: 'ddns.ge' })).toBe('cpe.ddns.ge');
+  });
+
+  it('maps subdomain list item to domain record', () => {
+    const record = mapDnsheSubdomainToDomainData({
+      full_domain: 'rando.cc.cd',
+      created_at: '2026-06-27 19:41',
+      expires_at: '2027-06-27 19:41',
+      status: 'active',
+    }, resolveDefaultRenewLinks(null), 'cat_dnshe');
+
+    expect(record.name).toBe('rando.cc.cd');
+    expect(record.registrar).toBe('DNSHE');
+    expect(record.registrationDate).toBe('2026-06-27');
+    expect(record.expiryDate).toBe('2027-06-27');
+    expect(record.categoryId).toBe('cat_dnshe');
+    expect(record.renewLink).toContain('dnshe.com');
   });
 });

@@ -150,7 +150,7 @@ const STACKRYZE_SUFFIXES = ['.indevs.in', '.sryze.cc', '.ryzedns.org', '.nx.kg']
 
 const DNSHE_SUFFIXES = [
   '.de5.net', '.us.ci', '.cc.cd', '.bot.cd',
-  '.ccwu.cc', '.bbroot.com', '.bbroott.com', '.cn.mt', '.onlydev.cc',
+  '.ccwu.cc', '.bbroot.com', '.bbroott.com', '.cn.mt', '.onlydev.cc', '.ddns.ge',
 ];
 
 export function isStackryzeDomain(domainName) {
@@ -1130,6 +1130,198 @@ async function queryDnsheWhois(domain) {
     const msg = error.name === 'AbortError' ? 'DNSHE WHOIS查询超时（15秒）' : error.message;
     return { success: false, error: msg, domain: domain };
   }
+}
+
+const DNSHE_API_BASE = 'https://api005.dnshe.com/index.php';
+
+async function requestDnsheApi({ endpoint, action = '', query = {}, method = 'GET', body = null, signal = null }) {
+  const { key, secret } = getDnsheApiCredentials();
+  if (!key || !secret) {
+    return {
+      ok: false,
+      error: 'DNSHE 查询需在环境变量中配置 DNSHE_API_KEY 与 DNSHE_API_SECRET（在 DNSHE 控制台 Domain Hub 生成 Access Token）',
+    };
+  }
+
+  const params = new URLSearchParams({ m: 'domain_hub', endpoint });
+  if (action) params.set('action', action);
+  for (const [paramKey, paramValue] of Object.entries(query || {})) {
+    if (paramValue !== undefined && paramValue !== null && String(paramValue) !== '') {
+      params.set(paramKey, String(paramValue));
+    }
+  }
+
+  const init = {
+    method,
+    headers: {
+      'accept': 'application/json',
+      'X-API-Key': key,
+      'X-API-Secret': secret,
+    },
+    signal,
+  };
+  if (body !== null) {
+    init.headers['content-type'] = 'application/json';
+    init.body = JSON.stringify(body);
+  }
+
+  const response = await fetch(`${DNSHE_API_BASE}?${params.toString()}`, init);
+  const text = await response.text();
+  const parsed = parseDnsheApiJsonBody(text);
+  if (!parsed.ok) {
+    return { ok: false, error: parsed.error, html: parsed.html };
+  }
+
+  const result = parsed.data;
+  if (result.error_code === 'auth_invalid_credentials' || result.auth_required) {
+    return { ok: false, error: dnsheAuthErrorMessage(result) };
+  }
+  if (!response.ok || result.success === false) {
+    return { ok: false, error: result.message || result.error || `DNSHE API 失败: ${response.status}` };
+  }
+  return { ok: true, data: result };
+}
+
+export function getDnsheSubdomainFullName(sub) {
+  if (!sub || typeof sub !== 'object') return '';
+  const full = String(sub.full_domain || '').trim();
+  if (full) return full.toLowerCase();
+  const prefix = String(sub.subdomain || '').trim();
+  const root = String(sub.rootdomain || '').trim();
+  if (prefix && root) return `${prefix}.${root}`.toLowerCase();
+  return root.toLowerCase();
+}
+
+export function mapDnsheSubdomainToDomainData(sub, renewLinks, categoryId = 'default') {
+  const name = getDnsheSubdomainFullName(sub);
+  const registrationDate = sub.created_at ? formatDate(sub.created_at) : '';
+  const expiryDate = sub.expires_at ? formatDate(sub.expires_at) : '';
+  if (!name || !registrationDate || !expiryDate) return null;
+
+  return {
+    name,
+    registrationDate,
+    expiryDate,
+    registrar: 'DNSHE',
+    registeredAccount: '',
+    categoryId,
+    customNote: '',
+    noteColor: 'tag-blue',
+    renewLink: getEffectiveRenewLink({ name, renewLink: '' }, renewLinks || RENEW_LINK_BUILTIN_DEFAULTS),
+    lastRenewed: null,
+    renewCycle: { value: 1, unit: 'year' },
+    price: null,
+    notifySettings: { useGlobalSettings: true, notifyDays: 30, enabled: true },
+  };
+}
+
+async function fetchAllDnsheSubdomains() {
+  const all = [];
+  let page = 1;
+
+  for (let guard = 0; guard < 100; guard++) {
+    const res = await requestDnsheApi({
+      endpoint: 'subdomains',
+      action: 'list',
+      query: { page, per_page: 100, include_total: 1 },
+    });
+    if (!res.ok) throw new Error(res.error);
+    const items = Array.isArray(res.data.subdomains) ? res.data.subdomains : [];
+    all.push(...items);
+    const pagination = res.data.pagination || {};
+    if (!pagination.has_more) break;
+    page = pagination.next_page || (page + 1);
+    if (!items.length) break;
+  }
+  return all;
+}
+
+async function previewDnsheImport() {
+  const subs = await fetchAllDnsheSubdomains();
+  const existing = await getDomains();
+  const existingNames = new Set(existing.map((d) => String(d.name || '').toLowerCase()));
+
+  return subs.map((sub) => {
+    const name = getDnsheSubdomainFullName(sub);
+    const registrationDate = sub.created_at ? formatDate(sub.created_at) : '';
+    const expiryDate = sub.expires_at ? formatDate(sub.expires_at) : '';
+    const alreadyExists = existingNames.has(name);
+    return {
+      name,
+      status: sub.status || '',
+      registrationDate,
+      expiryDate,
+      alreadyExists,
+      importable: !!name && !!registrationDate && !!expiryDate && !alreadyExists,
+    };
+  }).filter((item) => item.name);
+}
+
+async function ensureCategoryByName(name) {
+  const trimmed = String(name || '').trim();
+  if (!trimmed) return 'default';
+  const categories = await getCategories();
+  const existing = categories.find((cat) => cat.name === trimmed);
+  if (existing) return existing.id;
+  try {
+    const created = await addCategory({ name: trimmed, description: '' });
+    return created.id;
+  } catch (error) {
+    const refreshed = await getCategories();
+    return refreshed.find((cat) => cat.name === trimmed)?.id || 'default';
+  }
+}
+
+async function importDnsheDomains({ names = null, skipExisting = true } = {}) {
+  const subs = await fetchAllDnsheSubdomains();
+  const config = await getTelegramConfig();
+  const renewLinks = resolveDefaultRenewLinks(config.defaultRenewLinks);
+  const categoryId = await ensureCategoryByName('DNSHE');
+  const domains = await getDomains();
+  const existingNames = new Set(domains.map((d) => String(d.name || '').toLowerCase()));
+  const nameFilter = Array.isArray(names)
+    ? new Set(names.map((n) => String(n).toLowerCase()))
+    : null;
+
+  const addedNames = [];
+  const skippedItems = [];
+  const failed = [];
+
+  for (const sub of subs) {
+    const name = getDnsheSubdomainFullName(sub);
+    if (!name) continue;
+    if (nameFilter && !nameFilter.has(name)) continue;
+    if (skipExisting && existingNames.has(name)) {
+      skippedItems.push({ name, reason: '已存在' });
+      continue;
+    }
+
+    const data = mapDnsheSubdomainToDomainData(sub, renewLinks, categoryId);
+    if (!data) {
+      failed.push({ name, reason: '缺少注册或到期日期' });
+      continue;
+    }
+
+    data.id = crypto.randomUUID();
+    data.createdAt = new Date().toISOString();
+    data.renewCycle = sanitizeRenewCycle(data.renewCycle);
+    domains.push(data);
+    existingNames.add(name);
+    addedNames.push(name);
+  }
+
+  if (addedNames.length) {
+    await DOMAIN_MONITOR.put('domains', JSON.stringify(domains));
+  }
+
+  return {
+    success: true,
+    added: addedNames.length,
+    skipped: skippedItems.length,
+    failed,
+    addedNames,
+    skippedItems,
+  };
 }
 
 // PP.UA 域名查询函数 (通过 TCP socket 直连 whois.pp.ua)
@@ -3488,6 +3680,9 @@ const getHTMLContent = (title) => `
                 <button class="btn btn-success btn-action add-domain-btn" data-bs-toggle="modal" data-bs-target="#addDomainModal">
                     <i class="iconfont icon-jia" style="color: white;"></i> <span style="color: white;">添加域名</span>
                 </button>
+                <button class="btn btn-info btn-action" id="dnsheImportBtn" data-bs-toggle="modal" data-bs-target="#dnsheImportModal" type="button">
+                    <i class="iconfont icon-earth-full" style="color: white;"></i> <span style="color: white;">DNSHE 导入</span>
+                </button>
                 <div class="dropdown">
                     <button class="btn btn-danger btn-action sort-btn" type="button" id="sortDropdown" data-bs-toggle="dropdown" aria-expanded="false">
                         <i class="iconfont icon-paixu" style="color: white;"></i> <span style="color: white;">域名排序</span>
@@ -3667,6 +3862,43 @@ const getHTMLContent = (title) => `
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal"><span style="color: white;"><i class="iconfont icon-xmark"></i> 取消</span></button>
                                 <button type="button" class="btn btn-primary" id="saveDomainBtn"><span style="color: white;"><i class="iconfont icon-save-3-fill"></i> 保存</span></button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- DNSHE 一键导入模态框 -->
+    <div class="modal fade" id="dnsheImportModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="iconfont icon-earth-full"></i> 从 DNSHE 导入域名</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="form-text mb-3">通过 DNSHE API 拉取当前账号下的域名列表，勾选后一键导入。需在 Worker 环境变量中配置 <code>DNSHE_API_KEY</code> 与 <code>DNSHE_API_SECRET</code>。</p>
+                    <div id="dnsheImportStatus" class="alert alert-info py-2 mb-3" style="display: none;"></div>
+                    <div class="table-responsive" style="max-height: 360px; overflow-y: auto;">
+                        <table class="table table-sm table-hover align-middle mb-0">
+                            <thead>
+                                <tr>
+                                    <th style="width: 42px;"><input type="checkbox" class="form-check-input" id="dnsheImportSelectAll" checked></th>
+                                    <th>域名</th>
+                                    <th>到期</th>
+                                    <th>状态</th>
+                                    <th>备注</th>
+                                </tr>
+                            </thead>
+                            <tbody id="dnsheImportList">
+                                <tr><td colspan="5" class="text-muted text-center py-4">点击「刷新列表」加载 DNSHE 域名</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" id="dnsheImportRefreshBtn"><i class="iconfont icon-repeat"></i> 刷新列表</button>
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal"><span style="color: white;"><i class="iconfont icon-xmark"></i> 取消</span></button>
+                    <button type="button" class="btn btn-primary" id="dnsheImportConfirmBtn"><span style="color: white;"><i class="iconfont icon-jia"></i> 导入选中</span></button>
                 </div>
             </div>
         </div>
@@ -4122,7 +4354,7 @@ const getHTMLContent = (title) => `
             });
             
             // 添加模态框焦点管理 - 让Bootstrap自己处理aria-hidden
-            const modals = ['addDomainModal', 'categoryManageModal', 'settingsModal', 'deleteDomainModal', 'syncExpiryModal', 'deleteCategoryModal'];
+            const modals = ['addDomainModal', 'dnsheImportModal', 'categoryManageModal', 'settingsModal', 'deleteDomainModal', 'syncExpiryModal', 'deleteCategoryModal'];
             modals.forEach(modalId => {
                 const modalElement = document.getElementById(modalId);
                 if (modalElement) {
@@ -4191,7 +4423,7 @@ const getHTMLContent = (title) => `
                 const isStackryze = lowerDomain.endsWith('.indevs.in') || lowerDomain.endsWith('.sryze.cc') || lowerDomain.endsWith('.ryzedns.org') || lowerDomain.endsWith('.nx.kg');
                 const isDnshe = lowerDomain.endsWith('.de5.net') || lowerDomain.endsWith('.us.ci') || lowerDomain.endsWith('.cc.cd') || lowerDomain.endsWith('.bot.cd') ||
                     lowerDomain.endsWith('.ccwu.cc') || lowerDomain.endsWith('.bbroot.com') || lowerDomain.endsWith('.bbroott.com') ||
-                    lowerDomain.endsWith('.cn.mt') || lowerDomain.endsWith('.onlydev.cc');
+                    lowerDomain.endsWith('.cn.mt') || lowerDomain.endsWith('.onlydev.cc') || lowerDomain.endsWith('.ddns.ge');
 
                 if (dotCount !== 1 && !((isPpUa || isEuCc || isDigitalPlat || isStackryze || isDnshe) && dotCount === 2)) {
                     if (dotCount === 0) {
@@ -4260,6 +4492,150 @@ const getHTMLContent = (title) => `
             
             // 测试Telegram按钮
             document.getElementById('testTelegramBtn').addEventListener('click', testTelegram);
+
+            let dnsheImportItems = [];
+
+            function setDnsheImportStatus(message, type = 'info') {
+                const el = document.getElementById('dnsheImportStatus');
+                if (!el) return;
+                if (!message) {
+                    el.style.display = 'none';
+                    el.textContent = '';
+                    return;
+                }
+                el.className = 'alert py-2 mb-3 alert-' + type;
+                el.textContent = message;
+                el.style.display = 'block';
+            }
+
+            function renderDnsheImportList(items) {
+                dnsheImportItems = Array.isArray(items) ? items : [];
+                const tbody = document.getElementById('dnsheImportList');
+                const selectAll = document.getElementById('dnsheImportSelectAll');
+                if (!tbody) return;
+
+                if (!dnsheImportItems.length) {
+                    tbody.innerHTML = '<tr><td colspan="5" class="text-muted text-center py-4">DNSHE 账号下没有可显示的域名</td></tr>';
+                    if (selectAll) selectAll.checked = false;
+                    return;
+                }
+
+                tbody.innerHTML = dnsheImportItems.map(function(item, index) {
+                    const note = item.alreadyExists ? '已存在' : (item.importable ? '可导入' : '信息不完整');
+                    const disabled = !item.importable;
+                    return '<tr>' +
+                        '<td><input type="checkbox" class="form-check-input dnshe-import-check" data-index="' + index + '"' +
+                        (disabled ? ' disabled' : ' checked') + '></td>' +
+                        '<td>' + escapeHtml(item.name) + '</td>' +
+                        '<td>' + escapeHtml(item.expiryDate || '-') + '</td>' +
+                        '<td>' + escapeHtml(item.status || '-') + '</td>' +
+                        '<td>' + escapeHtml(note) + '</td>' +
+                        '</tr>';
+                }).join('');
+
+                if (selectAll) {
+                    const importable = dnsheImportItems.filter(function(item) { return item.importable; });
+                    selectAll.checked = importable.length > 0;
+                    selectAll.disabled = importable.length === 0;
+                }
+            }
+
+            async function loadDnsheImportPreview() {
+                const refreshBtn = document.getElementById('dnsheImportRefreshBtn');
+                const confirmBtn = document.getElementById('dnsheImportConfirmBtn');
+                const originalRefresh = refreshBtn ? refreshBtn.innerHTML : '';
+                try {
+                    setDnsheImportStatus('正在从 DNSHE 拉取域名列表...', 'info');
+                    if (refreshBtn) {
+                        refreshBtn.disabled = true;
+                        refreshBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>加载中...';
+                    }
+                    if (confirmBtn) confirmBtn.disabled = true;
+
+                    const response = await fetch('/api/dnshe/domains');
+                    const result = await response.json();
+                    if (!response.ok || !result.success) {
+                        throw new Error(result.error || '加载 DNSHE 域名列表失败');
+                    }
+
+                    renderDnsheImportList(result.domains || []);
+                    const importableCount = (result.domains || []).filter(function(item) { return item.importable; }).length;
+                    setDnsheImportStatus(
+                        '共 ' + (result.total || 0) + ' 个域名，其中 ' + importableCount + ' 个可导入（已存在的会自动跳过）',
+                        importableCount ? 'success' : 'warning'
+                    );
+                } catch (error) {
+                    renderDnsheImportList([]);
+                    setDnsheImportStatus(error.message, 'danger');
+                } finally {
+                    if (refreshBtn) {
+                        refreshBtn.disabled = false;
+                        refreshBtn.innerHTML = originalRefresh;
+                    }
+                    if (confirmBtn) confirmBtn.disabled = false;
+                }
+            }
+
+            async function confirmDnsheImport() {
+                const confirmBtn = document.getElementById('dnsheImportConfirmBtn');
+                const selected = [];
+                document.querySelectorAll('.dnshe-import-check:checked').forEach(function(input) {
+                    const index = parseInt(input.getAttribute('data-index'), 10);
+                    if (!Number.isNaN(index) && dnsheImportItems[index]) {
+                        selected.push(dnsheImportItems[index].name);
+                    }
+                });
+
+                if (!selected.length) {
+                    setDnsheImportStatus('请至少选择一个可导入的域名', 'warning');
+                    return;
+                }
+
+                const original = confirmBtn ? confirmBtn.innerHTML : '';
+                try {
+                    if (confirmBtn) {
+                        confirmBtn.disabled = true;
+                        confirmBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>导入中...';
+                    }
+                    setDnsheImportStatus('正在导入 ' + selected.length + ' 个域名...', 'info');
+
+                    const response = await fetch('/api/dnshe/import', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ names: selected, skipExisting: true }),
+                    });
+                    const result = await response.json();
+                    if (!response.ok || !result.success) {
+                        throw new Error(result.error || '导入失败');
+                    }
+
+                    await loadDomains();
+                    renderDomainList();
+                    setDnsheImportStatus('成功导入 ' + result.added + ' 个域名，跳过 ' + result.skipped + ' 个已存在域名', 'success');
+                    await loadDnsheImportPreview();
+
+                    if (result.added > 0) {
+                        showAlert('success', '已从 DNSHE 导入 ' + result.added + ' 个域名');
+                    }
+                } catch (error) {
+                    setDnsheImportStatus(error.message, 'danger');
+                } finally {
+                    if (confirmBtn) {
+                        confirmBtn.disabled = false;
+                        confirmBtn.innerHTML = original;
+                    }
+                }
+            }
+
+            document.getElementById('dnsheImportRefreshBtn').addEventListener('click', loadDnsheImportPreview);
+            document.getElementById('dnsheImportConfirmBtn').addEventListener('click', confirmDnsheImport);
+            document.getElementById('dnsheImportSelectAll').addEventListener('change', function() {
+                const checked = this.checked;
+                document.querySelectorAll('.dnshe-import-check:not(:disabled)').forEach(function(input) {
+                    input.checked = checked;
+                });
+            });
+            document.getElementById('dnsheImportModal').addEventListener('shown.bs.modal', loadDnsheImportPreview);
             
             // 域名通知设置 - 全局/自定义切换
             document.getElementById('useGlobalSettings').addEventListener('change', updateDomainNotifyDaysUI);
@@ -4860,7 +5236,8 @@ const getHTMLContent = (title) => `
             const lower = (name || '').toLowerCase();
             return lower.endsWith('.de5.net') || lower.endsWith('.us.ci') || lower.endsWith('.cc.cd') ||
                 lower.endsWith('.bot.cd') || lower.endsWith('.ccwu.cc') || lower.endsWith('.bbroot.com') ||
-                lower.endsWith('.bbroott.com') || lower.endsWith('.cn.mt') || lower.endsWith('.onlydev.cc');
+                lower.endsWith('.bbroott.com') || lower.endsWith('.cn.mt') || lower.endsWith('.onlydev.cc') ||
+                lower.endsWith('.ddns.ge');
         }
 
         function getEffectiveRenewLinkFrontend(domain) {
@@ -6930,6 +7307,31 @@ async function handleApiRequest(request) {
     }
   }
   
+  // DNSHE 域名列表预览（用于一键导入）
+  if (path === '/api/dnshe/domains' && request.method === 'GET') {
+    try {
+      const domains = await previewDnsheImport();
+      const importable = domains.filter((item) => item.importable).length;
+      return jsonResponse({ success: true, domains, total: domains.length, importable });
+    } catch (error) {
+      return jsonResponse({ success: false, error: error.message || '获取 DNSHE 域名列表失败' }, 400);
+    }
+  }
+
+  // DNSHE 一键导入
+  if (path === '/api/dnshe/import' && request.method === 'POST') {
+    try {
+      const body = await request.json().catch(() => ({}));
+      const result = await importDnsheDomains({
+        names: Array.isArray(body.names) ? body.names : null,
+        skipExisting: body.skipExisting !== false,
+      });
+      return jsonResponse(result);
+    } catch (error) {
+      return jsonResponse({ success: false, error: error.message || 'DNSHE 导入失败' }, 400);
+    }
+  }
+
   // 获取Telegram配置
   if (path === '/api/telegram/config' && request.method === 'GET') {
     try {
