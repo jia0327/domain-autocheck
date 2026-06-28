@@ -156,33 +156,257 @@ function applyExpirySyncFromWhois(record, whoisExpiry, now) {
 }
 
 // ================================
-// 默认续费链接（按服务商）
+// 厂商模板（续费链接 / 后缀 / 窗口 / 默认提醒 / WHOIS / API 鉴权）
 // ================================
-// 内置默认值；系统设置可覆盖。域名自定义 renewLink 优先于默认。
+// 内置模板；系统设置可覆盖字段或新增自定义厂商。域名自定义 renewLink 优先。
 
-const RENEW_LINK_BUILTIN_DEFAULTS = {
-  nicUa: 'https://nic.ua/en/my/domains',
-  gname: 'https://www.gname.com/tld-eu-cc.html#registered',
-  digitalPlat: 'https://dash.domain.digitalplat.org/panel/main?page=%2Fpanel%2Fdomains',
-  stackryze: 'https://domain.stackryze.com/my-domains',
-  dnshe: 'https://my.dnshe.com/index.php?m=domain_hub',
-};
+export const VENDOR_WHOIS_TYPES = ['ppUa', 'euCc', 'digitalPlat', 'stackryze', 'dnshe', 'rdap', ''];
 
-// 到期前多少天内才开放续费；0 表示不限制。Gname eu.cc 免费续费需在到期 90 天内；Stackryze 为 60 天；DNSHE 为 180 天。
-const RENEW_WINDOW_BUILTIN_DEFAULTS = {
-  nicUa: 0,
-  gname: 90,
-  digitalPlat: 0,
-  stackryze: 60,
-  dnshe: 180,
-};
-
-const STACKRYZE_SUFFIXES = ['.indevs.in', '.sryze.cc', '.ryzedns.org', '.nx.kg'];
-
-const DNSHE_SUFFIXES = [
-  '.de5.net', '.us.ci', '.cc.cd', '.bot.cd',
-  '.ccwu.cc', '.bbroot.com', '.bbroott.com', '.cn.mt', '.onlydev.cc', '.ddns.ge',
+const VENDOR_BUILTIN_TEMPLATES = [
+  {
+    id: 'nicUa',
+    name: 'NIC.UA',
+    websiteUrl: 'https://nic.ua',
+    renewLink: 'https://nic.ua/en/my/domains',
+    suffixes: ['.pp.ua'],
+    renewWindowDays: 0,
+    defaultNotifyDays: 30,
+    whois: 'ppUa',
+    auth: null,
+  },
+  {
+    id: 'gname',
+    name: 'Gname',
+    websiteUrl: 'https://www.gname.com',
+    renewLink: 'https://www.gname.com/tld-eu-cc.html#registered',
+    suffixes: ['.eu.cc'],
+    renewWindowDays: 90,
+    defaultNotifyDays: 30,
+    whois: 'euCc',
+    auth: null,
+  },
+  {
+    id: 'digitalPlat',
+    name: 'DigitalPlat',
+    websiteUrl: 'https://domain.digitalplat.org',
+    renewLink: 'https://dash.domain.digitalplat.org/panel/main?page=%2Fpanel%2Fdomains',
+    suffixes: ['.qzz.io', '.dpdns.org', '.us.kg', '.xx.kg'],
+    renewWindowDays: 0,
+    defaultNotifyDays: 30,
+    whois: 'digitalPlat',
+    auth: null,
+  },
+  {
+    id: 'stackryze',
+    name: 'Stackryze',
+    websiteUrl: 'https://domain.stackryze.com',
+    renewLink: 'https://domain.stackryze.com/my-domains',
+    suffixes: ['.indevs.in', '.sryze.cc', '.ryzedns.org', '.nx.kg'],
+    renewWindowDays: 60,
+    defaultNotifyDays: 30,
+    whois: 'stackryze',
+    auth: null,
+  },
+  {
+    id: 'dnshe',
+    name: 'DNSHE',
+    websiteUrl: 'https://www.dnshe.com',
+    renewLink: 'https://my.dnshe.com/index.php?m=domain_hub',
+    suffixes: ['.de5.net', '.us.ci', '.cc.cd', '.bot.cd', '.ccwu.cc', '.bbroot.com', '.bbroott.com', '.cn.mt', '.onlydev.cc', '.ddns.ge'],
+    renewWindowDays: 180,
+    defaultNotifyDays: 30,
+    whois: 'dnshe',
+    auth: { type: 'dnshe', keyEnv: 'DNSHE_API_KEY', secretEnv: 'DNSHE_API_SECRET' },
+  },
 ];
+
+const VENDOR_BUILTIN_IDS = new Set(VENDOR_BUILTIN_TEMPLATES.map((t) => t.id));
+
+function normalizeVendorSuffix(raw) {
+  const s = String(raw || '').trim().toLowerCase();
+  if (!s) return '';
+  return s.startsWith('.') ? s : ('.' + s);
+}
+
+function sanitizeVendorAuth(input) {
+  if (!input || typeof input !== 'object') return null;
+  const type = String(input.type || '').trim();
+  if (type !== 'dnshe') return null;
+  const auth = { type: 'dnshe' };
+  const apiKey = String(input.apiKey || '').trim().slice(0, 256);
+  const apiSecret = String(input.apiSecret || '').trim().slice(0, 256);
+  if (apiKey) auth.apiKey = apiKey;
+  if (apiSecret) auth.apiSecret = apiSecret;
+  const keyEnv = String(input.keyEnv || 'DNSHE_API_KEY').trim().slice(0, 64);
+  const secretEnv = String(input.secretEnv || 'DNSHE_API_SECRET').trim().slice(0, 64);
+  if (keyEnv) auth.keyEnv = keyEnv;
+  if (secretEnv) auth.secretEnv = secretEnv;
+  return auth;
+}
+
+export function sanitizeVendorTemplateItem(input) {
+  if (!input || typeof input !== 'object') return null;
+  const id = String(input.id || '').trim().slice(0, 48);
+  if (!id || !/^[a-zA-Z][a-zA-Z0-9_]*$/.test(id)) return null;
+  if (!VENDOR_BUILTIN_IDS.has(id) && !id.startsWith('v_')) return null;
+
+  const name = String(input.name || '').trim().slice(0, 64);
+  if (!name) return null;
+
+  const suffixes = [...new Set(
+    (Array.isArray(input.suffixes) ? input.suffixes : [])
+      .map(normalizeVendorSuffix)
+      .filter((s) => s.length > 1 && /^\.[a-z0-9.-]+$/.test(s)),
+  )];
+  if (!suffixes.length) return null;
+
+  let renewWindowDays = parseInt(String(input.renewWindowDays ?? 0), 10);
+  if (Number.isNaN(renewWindowDays) || renewWindowDays < 0) renewWindowDays = 0;
+  if (renewWindowDays > 3650) renewWindowDays = 3650;
+
+  let defaultNotifyDays = parseInt(String(input.defaultNotifyDays ?? 30), 10);
+  if (Number.isNaN(defaultNotifyDays) || defaultNotifyDays < 1) defaultNotifyDays = 30;
+  if (defaultNotifyDays > 90) defaultNotifyDays = 90;
+
+  const whois = VENDOR_WHOIS_TYPES.includes(String(input.whois || '')) ? String(input.whois || '') : '';
+
+  const websiteRaw = String(input.websiteUrl || '').trim();
+  const renewRaw = String(input.renewLink || '').trim();
+  const websiteUrl = websiteRaw ? (safeUrl(websiteRaw) || '') : '';
+  const renewLink = renewRaw ? (safeUrl(renewRaw) || '') : '';
+
+  return {
+    id,
+    name,
+    websiteUrl,
+    renewLink,
+    suffixes,
+    renewWindowDays,
+    defaultNotifyDays,
+    whois,
+    auth: sanitizeVendorAuth(input.auth),
+  };
+}
+
+export function sanitizeVendorTemplates(input) {
+  if (!Array.isArray(input)) return [];
+  const out = [];
+  const seen = new Set();
+  for (const item of input) {
+    const sanitized = sanitizeVendorTemplateItem(item);
+    if (!sanitized || seen.has(sanitized.id)) continue;
+    seen.add(sanitized.id);
+    out.push(sanitized);
+  }
+  return out;
+}
+
+export function getBuiltinVendorTemplates() {
+  return VENDOR_BUILTIN_TEMPLATES.map((t) => ({ ...t, builtin: true }));
+}
+
+function isLegacyRenewConfigObject(obj) {
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return false;
+  return Object.keys(obj).some((k) => VENDOR_BUILTIN_IDS.has(k));
+}
+
+function legacyRenewShape(obj) {
+  if (!isLegacyRenewConfigObject(obj)) return null;
+  const keys = Object.keys(obj).filter((k) => VENDOR_BUILTIN_IDS.has(k));
+  const allNumeric = keys.length > 0 && keys.every((k) => {
+    const v = obj[k];
+    if (v === undefined || v === null || v === '') return false;
+    if (String(v).includes('://')) return false;
+    return !Number.isNaN(parseInt(String(v), 10));
+  });
+  return allNumeric ? 'windows' : 'links';
+}
+
+export function resolveVendorTemplates(storedTemplates, legacyConfig) {
+  const byId = Object.fromEntries(getBuiltinVendorTemplates().map((t) => [t.id, { ...t }]));
+  const sanitized = sanitizeVendorTemplates(storedTemplates);
+
+  if (sanitized.length) {
+    for (const item of sanitized) {
+      if (byId[item.id]) {
+        byId[item.id] = { ...byId[item.id], ...item, builtin: true };
+      } else {
+        byId[item.id] = { ...item, builtin: false };
+      }
+    }
+  } else if (legacyConfig) {
+    const links = legacyConfig.defaultRenewLinks;
+    const windows = legacyConfig.renewWindowDays;
+    if (links && typeof links === 'object') {
+      for (const id of VENDOR_BUILTIN_IDS) {
+        if (links[id] !== undefined && links[id] !== null && String(links[id]).trim() !== '') {
+          const url = safeUrl(String(links[id]).trim());
+          if (url) byId[id].renewLink = url;
+        }
+      }
+    }
+    if (windows && typeof windows === 'object') {
+      for (const id of VENDOR_BUILTIN_IDS) {
+        if (windows[id] !== undefined && windows[id] !== null && String(windows[id]).trim() !== '') {
+          const n = parseInt(String(windows[id]), 10);
+          if (!Number.isNaN(n) && n >= 0 && n <= 3650) byId[id].renewWindowDays = n;
+        }
+      }
+    }
+  }
+
+  return Object.values(byId);
+}
+
+export function matchVendorTemplate(domainName, templates) {
+  const lower = (domainName || '').toLowerCase();
+  let best = null;
+  let bestLen = 0;
+  for (const t of templates || []) {
+    for (const suffix of t.suffixes || []) {
+      const s = normalizeVendorSuffix(suffix);
+      if (lower.endsWith(s) && s.length > bestLen) {
+        best = t;
+        bestLen = s.length;
+      }
+    }
+  }
+  return best;
+}
+
+function renewConfigFromTemplates(templates) {
+  const links = {};
+  const windows = {};
+  for (const t of templates) {
+    links[t.id] = t.renewLink || '';
+    windows[t.id] = t.renewWindowDays ?? 0;
+  }
+  return { defaultRenewLinks: links, renewWindowDays: windows, vendorTemplates: templates };
+}
+
+function normalizeRenewConfig(config) {
+  if (Array.isArray(config)) {
+    const templates = resolveVendorTemplates(config);
+    return renewConfigFromTemplates(templates);
+  }
+  if (config && Array.isArray(config.vendorTemplates)) {
+    const templates = resolveVendorTemplates(config.vendorTemplates, config);
+    return renewConfigFromTemplates(templates);
+  }
+  if (config && (config.defaultRenewLinks || config.renewWindowDays)) {
+    const templates = resolveVendorTemplates(null, config);
+    return renewConfigFromTemplates(templates);
+  }
+  if (legacyRenewShape(config) === 'windows') {
+    const templates = resolveVendorTemplates(null, { renewWindowDays: config });
+    return renewConfigFromTemplates(templates);
+  }
+  if (legacyRenewShape(config) === 'links') {
+    const templates = resolveVendorTemplates(null, { defaultRenewLinks: config });
+    return renewConfigFromTemplates(templates);
+  }
+  return renewConfigFromTemplates(getBuiltinVendorTemplates());
+}
 
 // 后缀已进入 Public Suffix List，可在 Cloudflare 添加站点并通过 NS 托管（非完整列表会随 PSL 更新）
 const CLOUDFLARE_DELEGATABLE_SUFFIXES = [
@@ -244,37 +468,24 @@ export function applyNameserversUpdate(domain, nameservers) {
   return { changed: true, domain: updated, nameservers: ns || [] };
 }
 
-export function isStackryzeDomain(domainName) {
-  const lower = (domainName || '').toLowerCase();
-  return STACKRYZE_SUFFIXES.some((suffix) => lower.endsWith(suffix));
+export function isStackryzeDomain(domainName, templates) {
+  const t = matchVendorTemplate(domainName, templates || getBuiltinVendorTemplates());
+  return t?.whois === 'stackryze';
 }
 
-export function isDnsheDomain(domainName) {
-  const lower = (domainName || '').toLowerCase();
-  return DNSHE_SUFFIXES.some((suffix) => lower.endsWith(suffix));
+export function isDnsheDomain(domainName, templates) {
+  const t = matchVendorTemplate(domainName, templates || getBuiltinVendorTemplates());
+  return t?.whois === 'dnshe';
 }
 
-export function getRenewLinkProviderId(domainName) {
-  const lower = (domainName || '').toLowerCase();
-  if (lower.endsWith('.pp.ua')) return 'nicUa';
-  if (lower.endsWith('.eu.cc')) return 'gname';
-  if (lower.endsWith('.qzz.io') || lower.endsWith('.dpdns.org') ||
-      lower.endsWith('.us.kg') || lower.endsWith('.xx.kg')) return 'digitalPlat';
-  if (isStackryzeDomain(lower)) return 'stackryze';
-  if (isDnsheDomain(lower)) return 'dnshe';
-  return null;
+export function getRenewLinkProviderId(domainName, config) {
+  const rc = normalizeRenewConfig(config);
+  const vendor = matchVendorTemplate(domainName, rc.vendorTemplates);
+  return vendor?.id || null;
 }
 
 export function resolveDefaultRenewLinks(stored) {
-  const out = { ...RENEW_LINK_BUILTIN_DEFAULTS };
-  if (!stored || typeof stored !== 'object') return out;
-  for (const id of Object.keys(RENEW_LINK_BUILTIN_DEFAULTS)) {
-    if (stored[id] !== undefined && stored[id] !== null && String(stored[id]).trim() !== '') {
-      const url = safeUrl(String(stored[id]).trim());
-      if (url) out[id] = url;
-    }
-  }
-  return out;
+  return normalizeRenewConfig(stored).defaultRenewLinks;
 }
 
 export function getEffectiveRenewLink(domain, renewLinksConfig) {
@@ -284,9 +495,9 @@ export function getEffectiveRenewLink(domain, renewLinksConfig) {
     const safe = safeUrl(custom);
     return safe || custom;
   }
-  const providerId = getRenewLinkProviderId(domain.name);
-  const links = renewLinksConfig || RENEW_LINK_BUILTIN_DEFAULTS;
-  if (providerId && links[providerId]) return links[providerId];
+  const rc = normalizeRenewConfig(renewLinksConfig);
+  const vendor = matchVendorTemplate(domain.name, rc.vendorTemplates);
+  if (vendor?.renewLink) return vendor.renewLink;
   return '';
 }
 
@@ -298,15 +509,7 @@ export function computeDaysLeft(expiryDate, now = new Date()) {
 }
 
 export function resolveRenewWindowDays(stored) {
-  const out = { ...RENEW_WINDOW_BUILTIN_DEFAULTS };
-  if (!stored || typeof stored !== 'object') return out;
-  for (const id of Object.keys(RENEW_WINDOW_BUILTIN_DEFAULTS)) {
-    if (stored[id] !== undefined && stored[id] !== null && String(stored[id]).trim() !== '') {
-      const n = parseInt(String(stored[id]), 10);
-      if (!Number.isNaN(n) && n >= 0 && n <= 3650) out[id] = n;
-    }
-  }
-  return out;
+  return normalizeRenewConfig(stored).renewWindowDays;
 }
 
 export function isRenewLinkAvailable(domain, renewWindowConfig, now = new Date()) {
@@ -315,12 +518,13 @@ export function isRenewLinkAvailable(domain, renewWindowConfig, now = new Date()
   if (custom) {
     return { available: true, daysLeft, windowDays: 0, bypassWindow: true };
   }
-  const providerId = getRenewLinkProviderId(domain?.name);
-  const windows = renewWindowConfig || RENEW_WINDOW_BUILTIN_DEFAULTS;
+  const rc = normalizeRenewConfig(renewWindowConfig);
+  const vendor = matchVendorTemplate(domain?.name, rc.vendorTemplates);
+  const providerId = vendor?.id || null;
   if (!providerId) {
     return { available: true, daysLeft, windowDays: 0, providerId: null };
   }
-  const windowDays = windows[providerId] ?? 0;
+  const windowDays = vendor.renewWindowDays ?? 0;
   if (!windowDays || windowDays <= 0) {
     return { available: true, daysLeft, windowDays: 0, providerId };
   }
@@ -333,35 +537,58 @@ export function isRenewLinkAvailable(domain, renewWindowConfig, now = new Date()
 }
 
 function sanitizeDefaultRenewLinks(input) {
-  const stored = {};
-  if (!input || typeof input !== 'object') return stored;
-  for (const id of Object.keys(RENEW_LINK_BUILTIN_DEFAULTS)) {
-    if (input[id] !== undefined && input[id] !== null) {
-      const trimmed = String(input[id]).trim();
-      if (trimmed) {
-        const url = safeUrl(trimmed);
-        if (url) stored[id] = url;
-      }
-    }
+  const templates = resolveVendorTemplates(null, { defaultRenewLinks: input || {} });
+  const links = {};
+  for (const t of templates) {
+    if (t.renewLink) links[t.id] = t.renewLink;
   }
-  return stored;
+  return links;
 }
 
 function sanitizeRenewWindowDays(input) {
-  const stored = {};
-  if (!input || typeof input !== 'object') return stored;
-  for (const id of Object.keys(RENEW_WINDOW_BUILTIN_DEFAULTS)) {
-    if (input[id] !== undefined && input[id] !== null && String(input[id]).trim() !== '') {
-      const n = parseInt(String(input[id]), 10);
-      if (!Number.isNaN(n) && n >= 0 && n <= 3650) stored[id] = n;
-    }
+  const templates = resolveVendorTemplates(null, { renewWindowDays: input || {} });
+  const windows = {};
+  for (const t of templates) {
+    if (t.renewWindowDays !== undefined) windows[t.id] = t.renewWindowDays;
   }
-  return stored;
+  return windows;
+}
+
+function sanitizeVendorTemplatesForSave(input, legacyLinks, legacyWindows) {
+  const sanitized = sanitizeVendorTemplates(input);
+  if (sanitized.length) return sanitized;
+  const migrated = resolveVendorTemplates(null, {
+    defaultRenewLinks: legacyLinks,
+    renewWindowDays: legacyWindows,
+  });
+  return migrated.map(({ builtin, ...rest }) => rest);
+}
+
+async function getResolvedVendorTemplates() {
+  try {
+    const configStr = await DOMAIN_MONITOR.get('telegram_config') || '{}';
+    const config = JSON.parse(configStr);
+    return resolveVendorTemplates(config.vendorTemplates, config);
+  } catch {
+    return getBuiltinVendorTemplates();
+  }
+}
+
+export function getDnsheApiCredentials(templates) {
+  const list = templates || getBuiltinVendorTemplates();
+  const dnsheVendor = list.find((v) => v.whois === 'dnshe');
+  if (dnsheVendor?.auth?.apiKey && dnsheVendor?.auth?.apiSecret) {
+    return { key: dnsheVendor.auth.apiKey, secret: dnsheVendor.auth.apiSecret };
+  }
+  const key = typeof DNSHE_API_KEY !== 'undefined' ? String(DNSHE_API_KEY || '').trim() : '';
+  const secret = typeof DNSHE_API_SECRET !== 'undefined' ? String(DNSHE_API_SECRET || '').trim() : '';
+  return { key, secret };
 }
 
 function formatRenewLinkNotificationLine(domain, config, useHtmlBold) {
-  const renewLink = getEffectiveRenewLink(domain, config.defaultRenewLinks);
-  const availability = isRenewLinkAvailable(domain, config.renewWindowDays);
+  const rc = normalizeRenewConfig(config);
+  const renewLink = getEffectiveRenewLink(domain, rc);
+  const availability = isRenewLinkAvailable(domain, rc);
   const labelBold = useHtmlBold ? '<b>点击续期:</b> ' : '点击续期: ';
   const windowLabel = useHtmlBold ? '<b>续费窗口:</b> ' : '续费窗口: ';
   if (!renewLink) {
@@ -716,32 +943,20 @@ export function isMutatingMethod(method) {
 }
 
 // 判断域名是否支持WHOIS查询，返回对应的查询函数或null
-function getWhoisQueryFunction(domainName) {
-  const lowerDomain = domainName.toLowerCase();
-  const dotCount = lowerDomain.split('.').length - 1;
-
-  // pp.ua 二级域名
-  if (lowerDomain.endsWith('.pp.ua')) {
-    return queryPpUaWhois;
+function getWhoisQueryFunction(domainName, templates) {
+  const list = templates || getBuiltinVendorTemplates();
+  const vendor = matchVendorTemplate(domainName, list);
+  const whoisMap = {
+    ppUa: queryPpUaWhois,
+    euCc: queryEuCcWhois,
+    digitalPlat: queryDigitalPlatWhois,
+    stackryze: queryStackryzeWhois,
+    dnshe: queryDnsheWhois,
+  };
+  if (vendor?.whois && whoisMap[vendor.whois]) {
+    return whoisMap[vendor.whois];
   }
-  // eu.cc 二级域名
-  if (lowerDomain.endsWith('.eu.cc')) {
-    return queryEuCcWhois;
-  }
-  // DigitalPlat 二级域名
-  if (lowerDomain.endsWith('.qzz.io') || lowerDomain.endsWith('.dpdns.org') ||
-      lowerDomain.endsWith('.us.kg') || lowerDomain.endsWith('.xx.kg')) {
-    return queryDigitalPlatWhois;
-  }
-  // Stackryze 托管子域名（indevs.in / sryze.cc / ryzedns.org / nx.kg）
-  if (isStackryzeDomain(lowerDomain)) {
-    return queryStackryzeWhois;
-  }
-  // DNSHE 托管子域名（de5.net / ccwu.cc / bbroot.com 等）
-  if (isDnsheDomain(lowerDomain)) {
-    return queryDnsheWhois;
-  }
-  // 一级域名：RDAP 查询（免费无 Key），所有 gTLD 均可查
+  const dotCount = domainName.toLowerCase().split('.').length - 1;
   if (dotCount === 1) {
     return queryFirstLevelDomain;
   }
@@ -1087,12 +1302,6 @@ async function queryStackryzeWhois(domain) {
   }
 }
 
-function getDnsheApiCredentials() {
-  const key = typeof DNSHE_API_KEY !== 'undefined' ? String(DNSHE_API_KEY || '').trim() : '';
-  const secret = typeof DNSHE_API_SECRET !== 'undefined' ? String(DNSHE_API_SECRET || '').trim() : '';
-  return { key, secret };
-}
-
 // 解析 DNSHE API 响应体；HTML 常见于 my.dnshe.com 对非浏览器/非白名单 IP 的拦截
 export function parseDnsheApiJsonBody(text) {
   const trimmed = String(text || '').trim();
@@ -1147,11 +1356,12 @@ function dnsheAuthErrorMessage(result) {
 
 // DNSHE 托管子域名 WHOIS（api005.dnshe.com 优先，my.dnshe.com 兜底）
 async function queryDnsheWhois(domain) {
-  const { key, secret } = getDnsheApiCredentials();
+  const templates = await getResolvedVendorTemplates();
+  const { key, secret } = getDnsheApiCredentials(templates);
   if (!key || !secret) {
     return {
       success: false,
-      error: 'DNSHE 查询需在环境变量中配置 DNSHE_API_KEY 与 DNSHE_API_SECRET（在 DNSHE 控制台 Domain Hub 生成 Access Token）',
+      error: 'DNSHE 查询需配置 API Key：在厂商模板（DNSHE）中填写，或在环境变量中设置 DNSHE_API_KEY / DNSHE_API_SECRET',
       domain: domain,
     };
   }
@@ -1236,11 +1446,12 @@ async function queryDnsheWhois(domain) {
 const DNSHE_API_BASE = 'https://api005.dnshe.com/index.php';
 
 async function requestDnsheApi({ endpoint, action = '', query = {}, method = 'GET', body = null, signal = null }) {
-  const { key, secret } = getDnsheApiCredentials();
+  const templates = await getResolvedVendorTemplates();
+  const { key, secret } = getDnsheApiCredentials(templates);
   if (!key || !secret) {
     return {
       ok: false,
-      error: 'DNSHE 查询需在环境变量中配置 DNSHE_API_KEY 与 DNSHE_API_SECRET（在 DNSHE 控制台 Domain Hub 生成 Access Token）',
+      error: 'DNSHE 查询需配置 API Key：在厂商模板（DNSHE）中填写，或在环境变量中设置 DNSHE_API_KEY / DNSHE_API_SECRET',
     };
   }
 
@@ -1310,11 +1521,15 @@ export function mapDnsheSubdomainToDomainData(sub, renewLinks, categoryId = 'def
     categoryId,
     customNote: '',
     noteColor: 'tag-blue',
-    renewLink: getEffectiveRenewLink({ name, renewLink: '' }, renewLinks || RENEW_LINK_BUILTIN_DEFAULTS),
+    renewLink: getEffectiveRenewLink({ name, renewLink: '' }, renewLinks),
     lastRenewed: null,
     renewCycle: { value: 1, unit: 'year' },
     price: null,
-    notifySettings: { useGlobalSettings: true, notifyDays: 30, enabled: true },
+    notifySettings: {
+      useGlobalSettings: true,
+      notifyDays: (matchVendorTemplate(name, normalizeRenewConfig(renewLinks).vendorTemplates) || {}).defaultNotifyDays || 30,
+      enabled: true,
+    },
   };
   if (cloudflareZoneId) record.cloudflareZoneId = cloudflareZoneId;
   if (nameservers.length) record.nameservers = nameservers;
@@ -1453,7 +1668,7 @@ async function ensureCategoryByName(name) {
 async function importDnsheDomains({ names = null, skipExisting = true } = {}) {
   const subs = await fetchAllDnsheSubdomains();
   const config = await getTelegramConfig();
-  const renewLinks = resolveDefaultRenewLinks(config.defaultRenewLinks);
+  const renewLinks = resolveDefaultRenewLinks(config);
   const categoryId = await ensureCategoryByName('DNSHE');
   const domains = await getDomains();
   const existingNames = new Set(domains.map((d) => String(d.name || '').toLowerCase()));
@@ -4196,7 +4411,7 @@ const getHTMLContent = (title) => `
                                 <button class="nav-link active" id="settings-tab-display" data-bs-toggle="tab" data-bs-target="#settingsTabDisplay" type="button" role="tab">显示设置</button>
                             </li>
                             <li class="nav-item" role="presentation">
-                                <button class="nav-link" id="settings-tab-renew" data-bs-toggle="tab" data-bs-target="#settingsTabRenew" type="button" role="tab">续费链接</button>
+                                <button class="nav-link" id="settings-tab-renew" data-bs-toggle="tab" data-bs-target="#settingsTabRenew" type="button" role="tab">厂商模板</button>
                             </li>
                             <li class="nav-item" role="presentation">
                                 <button class="nav-link" id="settings-tab-notify" data-bs-toggle="tab" data-bs-target="#settingsTabNotify" type="button" role="tab">通知设置</button>
@@ -4241,54 +4456,19 @@ const getHTMLContent = (title) => `
                         
                         </div>
                         <div class="tab-pane fade" id="settingsTabRenew" role="tabpanel">
-                        <h6 class="mb-3" style="display: flex; align-items: center; gap: 5px;"><i class="iconfont icon-link" style="color: white;"></i> 默认续费链接</h6>
-                        <p class="form-text mb-3">按服务商设置默认链接；在域名编辑里填写的<strong>自定义续费链接优先</strong>，留空则使用此处默认值。</p>
-                        <div class="mb-3">
-                            <label for="defaultRenewLinkNicUa" class="form-label">NIC.UA <small class="text-muted">(pp.ua)</small></label>
-                            <input type="url" class="form-control" id="defaultRenewLinkNicUa" placeholder="https://nic.ua/en/my/domains">
-                        </div>
-                        <div class="mb-3">
-                            <label for="defaultRenewLinkGname" class="form-label">Gname <small class="text-muted">(eu.cc)</small></label>
-                            <input type="url" class="form-control" id="defaultRenewLinkGname" placeholder="https://www.gname.com/tld-eu-cc.html#registered">
-                        </div>
-                        <div class="mb-3">
-                            <label for="defaultRenewLinkDigitalPlat" class="form-label">DigitalPlat <small class="text-muted">(qzz.io / dpdns.org / us.kg / xx.kg)</small></label>
-                            <input type="url" class="form-control" id="defaultRenewLinkDigitalPlat" placeholder="https://dash.domain.digitalplat.org/panel/main?page=%2Fpanel%2Fdomains">
-                        </div>
-                        <div class="mb-3">
-                            <label for="defaultRenewLinkStackryze" class="form-label">Stackryze <small class="text-muted">(indevs.in / sryze.cc / ryzedns.org / nx.kg)</small></label>
-                            <input type="url" class="form-control" id="defaultRenewLinkStackryze" placeholder="https://domain.stackryze.com/my-domains">
-                        </div>
-                        <div class="mb-3">
-                            <label for="defaultRenewLinkDnshe" class="form-label">DNSHE <small class="text-muted">(de5.net / ccwu.cc / bbroot.com 等)</small></label>
-                            <input type="url" class="form-control" id="defaultRenewLinkDnshe" placeholder="https://my.dnshe.com/index.php?m=domain_hub">
-                        </div>
-
-                        <h6 class="mb-2 mt-2" style="font-size: 0.95rem;">续费开放窗口</h6>
-                        <p class="form-text mb-3">部分服务商仅允许在到期前 N 天内续费（如 Gname eu.cc 免费续费需 90 天内，Stackryze 为 60 天，DNSHE 为 180 天）。填 <strong>0</strong> 表示不限制；域名自定义续费链接不受此限制。</p>
-                        <div class="row g-2 mb-2">
-                            <div class="col-md-3">
-                                <label for="renewWindowNicUa" class="form-label">NIC.UA <small class="text-muted">(天)</small></label>
-                                <input type="number" class="form-control" id="renewWindowNicUa" min="0" max="3650" placeholder="0">
+                        <p class="form-text mb-3">配置厂商模板：按后缀匹配域名，自动填充厂商、续费链接与默认提醒天数。域名编辑中的<strong>自定义续费链接优先</strong>。</p>
+                        <div class="row g-3">
+                            <div class="col-md-4">
+                                <label class="form-label">厂商列表</label>
+                                <div class="list-group list-group-flush border rounded" id="vendorTemplateList" style="max-height: 420px; overflow-y: auto;"></div>
+                                <button type="button" class="btn btn-sm btn-outline-primary mt-2 w-100" id="addVendorTemplateBtn"><i class="iconfont icon-jia"></i> 添加厂商</button>
                             </div>
-                            <div class="col-md-3">
-                                <label for="renewWindowGname" class="form-label">Gname <small class="text-muted">(天)</small></label>
-                                <input type="number" class="form-control" id="renewWindowGname" min="0" max="3650" placeholder="90">
-                            </div>
-                            <div class="col-md-3">
-                                <label for="renewWindowDigitalPlat" class="form-label">DigitalPlat <small class="text-muted">(天)</small></label>
-                                <input type="number" class="form-control" id="renewWindowDigitalPlat" min="0" max="3650" placeholder="0">
-                            </div>
-                            <div class="col-md-3">
-                                <label for="renewWindowStackryze" class="form-label">Stackryze <small class="text-muted">(天)</small></label>
-                                <input type="number" class="form-control" id="renewWindowStackryze" min="0" max="3650" placeholder="60">
-                            </div>
-                            <div class="col-md-3">
-                                <label for="renewWindowDnshe" class="form-label">DNSHE <small class="text-muted">(天)</small></label>
-                                <input type="number" class="form-control" id="renewWindowDnshe" min="0" max="3650" placeholder="180">
+                            <div class="col-md-8">
+                                <div id="vendorTemplateEditor" class="border rounded p-3" style="border-color: rgba(255,255,255,0.12) !important; min-height: 320px;">
+                                    <p class="text-muted mb-0">请选择左侧厂商进行编辑</p>
+                                </div>
                             </div>
                         </div>
-                        
                         </div>
                         <div class="tab-pane fade" id="settingsTabNotify" role="tabpanel">
                         <div class="mb-3">
@@ -4442,6 +4622,221 @@ const getHTMLContent = (title) => `
         let currentDomainId = null;
         let currentCategoryId = null;
         let telegramConfig = {};
+        let vendorTemplatesDraft = [];
+        let selectedVendorTemplateId = null;
+        const VENDOR_BUILTIN_IDS_FRONTEND = ['nicUa', 'gname', 'digitalPlat', 'stackryze', 'dnshe'];
+        const VENDOR_WHOIS_OPTIONS = [
+            { value: '', label: '无 WHOIS' },
+            { value: 'ppUa', label: 'NIC.UA (pp.ua)' },
+            { value: 'euCc', label: 'Gname (eu.cc)' },
+            { value: 'digitalPlat', label: 'DigitalPlat' },
+            { value: 'stackryze', label: 'Stackryze' },
+            { value: 'dnshe', label: 'DNSHE (API)' },
+            { value: 'rdap', label: '通用 RDAP（一级域名）' },
+        ];
+
+        // keep in sync: normalizeVendorSuffix / matchVendorTemplate (backend exports)
+        function normalizeVendorSuffixFrontend(raw) {
+            const s = String(raw || '').trim().toLowerCase();
+            if (!s) return '';
+            return s.startsWith('.') ? s : ('.' + s);
+        }
+
+        function matchVendorTemplateFrontend(domainName, templates) {
+            const lower = (domainName || '').toLowerCase();
+            let best = null;
+            let bestLen = 0;
+            (templates || []).forEach(function(t) {
+                (t.suffixes || []).forEach(function(suffix) {
+                    const s = normalizeVendorSuffixFrontend(suffix);
+                    if (lower.endsWith(s) && s.length > bestLen) {
+                        best = t;
+                        bestLen = s.length;
+                    }
+                });
+            });
+            return best;
+        }
+
+        function getActiveVendorTemplates() {
+            return vendorTemplatesDraft.length ? vendorTemplatesDraft : (telegramConfig.vendorTemplates || []);
+        }
+
+        function domainAllowedDotsFrontend(domainName, templates) {
+            const lower = (domainName || '').toLowerCase();
+            const dotCount = lower.split('.').length - 1;
+            const vendor = matchVendorTemplateFrontend(lower, templates);
+            let allowedDots = 1;
+            if (vendor) {
+                (vendor.suffixes || []).forEach(function(s) {
+                    const norm = normalizeVendorSuffixFrontend(s);
+                    if (lower.endsWith(norm)) {
+                        allowedDots = Math.max(allowedDots, norm.split('.').filter(Boolean).length);
+                    }
+                });
+            }
+            return { dotCount: dotCount, allowedDots: allowedDots };
+        }
+
+        function persistVendorEditorToDraft() {
+            if (!selectedVendorTemplateId) return;
+            const idx = vendorTemplatesDraft.findIndex(function(t) { return t.id === selectedVendorTemplateId; });
+            if (idx === -1) return;
+            const suffixRaw = (document.getElementById('vendorSuffixes') || {}).value || '';
+            const suffixes = suffixRaw.split(/[\n,;]+/).map(normalizeVendorSuffixFrontend).filter(function(s) {
+                return s.length > 1;
+            });
+            const authType = (document.getElementById('vendorAuthType') || {}).value || '';
+            let auth = null;
+            if (authType === 'dnshe') {
+                auth = { type: 'dnshe' };
+                const apiKey = (document.getElementById('vendorApiKey') || {}).value.trim();
+                const apiSecret = (document.getElementById('vendorApiSecret') || {}).value.trim();
+                if (apiKey) auth.apiKey = apiKey;
+                if (apiSecret) auth.apiSecret = apiSecret;
+            }
+            vendorTemplatesDraft[idx] = {
+                id: selectedVendorTemplateId,
+                name: (document.getElementById('vendorName') || {}).value.trim(),
+                websiteUrl: (document.getElementById('vendorWebsiteUrl') || {}).value.trim(),
+                renewLink: (document.getElementById('vendorRenewLink') || {}).value.trim(),
+                suffixes: suffixes,
+                renewWindowDays: parseInt((document.getElementById('vendorRenewWindow') || {}).value, 10) || 0,
+                defaultNotifyDays: parseInt((document.getElementById('vendorDefaultNotifyDays') || {}).value, 10) || 30,
+                whois: (document.getElementById('vendorWhois') || {}).value || '',
+                auth: auth,
+                builtin: !!vendorTemplatesDraft[idx].builtin,
+            };
+        }
+
+        function renderVendorTemplateEditor(template) {
+            const editor = document.getElementById('vendorTemplateEditor');
+            if (!editor) return;
+            if (!template) {
+                editor.innerHTML = '<p class="text-muted mb-0">请选择左侧厂商进行编辑</p>';
+                return;
+            }
+            const isBuiltin = !!template.builtin || VENDOR_BUILTIN_IDS_FRONTEND.indexOf(template.id) !== -1;
+            const showAuth = template.whois === 'dnshe' || (template.auth && template.auth.type === 'dnshe');
+            const suffixText = (template.suffixes || []).join('\\n');
+            editor.innerHTML =
+                '<div class="mb-2"><label class="form-label">厂商名称</label>' +
+                '<input type="text" class="form-control" id="vendorName" value="' + escapeHtml(template.name || '') + '"></div>' +
+                '<div class="mb-2"><label class="form-label">官网链接</label>' +
+                '<input type="url" class="form-control" id="vendorWebsiteUrl" value="' + escapeHtml(template.websiteUrl || '') + '" placeholder="https://"></div>' +
+                '<div class="mb-2"><label class="form-label">默认续费链接</label>' +
+                '<input type="url" class="form-control" id="vendorRenewLink" value="' + escapeHtml(template.renewLink || '') + '" placeholder="https://"></div>' +
+                '<div class="mb-2"><label class="form-label">支持的后缀</label>' +
+                '<textarea class="form-control" id="vendorSuffixes" rows="3" placeholder="每行一个，如 .pp.ua">' + escapeHtml(suffixText) + '</textarea>' +
+                '<div class="form-text">每行一个后缀，须以 . 开头</div></div>' +
+                '<div class="row g-2 mb-2">' +
+                '<div class="col-md-6"><label class="form-label">续费开放窗口 <small class="text-muted">(天，0=不限)</small></label>' +
+                '<input type="number" class="form-control" id="vendorRenewWindow" min="0" max="3650" value="' + escapeHtml(String(template.renewWindowDays ?? 0)) + '"></div>' +
+                '<div class="col-md-6"><label class="form-label">默认提醒时间 <small class="text-muted">(天)</small></label>' +
+                '<input type="number" class="form-control" id="vendorDefaultNotifyDays" min="1" max="90" value="' + escapeHtml(String(template.defaultNotifyDays ?? 30)) + '"></div></div>' +
+                '<div class="mb-2"><label class="form-label">WHOIS 查询</label>' +
+                '<select class="form-select" id="vendorWhois"' + (isBuiltin ? ' disabled' : '') + '>' +
+                VENDOR_WHOIS_OPTIONS.map(function(opt) {
+                    return '<option value="' + escapeHtml(opt.value) + '"' + (template.whois === opt.value ? ' selected' : '') + '>' + escapeHtml(opt.label) + '</option>';
+                }).join('') + '</select>' +
+                (isBuiltin ? '<div class="form-text">内置厂商的 WHOIS 类型不可修改</div>' : '') + '</div>' +
+                (showAuth ?
+                '<div class="border rounded p-2 mb-2" style="border-color:rgba(255,255,255,0.12)!important;">' +
+                '<label class="form-label mb-1">API 鉴权 (DNSHE)</label>' +
+                '<input type="hidden" id="vendorAuthType" value="dnshe">' +
+                '<div class="mb-2"><input type="text" class="form-control form-control-sm" id="vendorApiKey" placeholder="API Key（可留空，使用环境变量 DNSHE_API_KEY）" value="' + escapeHtml((template.auth && template.auth.apiKey) || '') + '"></div>' +
+                '<div class="mb-0"><input type="password" class="form-control form-control-sm" id="vendorApiSecret" placeholder="API Secret（可留空，使用环境变量 DNSHE_API_SECRET）" value="' + escapeHtml((template.auth && template.auth.apiSecret) || '') + '"></div>' +
+                '<div class="form-text mt-1">环境变量优先于此处留空时的兜底；填写后将保存到 KV。</div></div>' : '') +
+                (!isBuiltin ? '<button type="button" class="btn btn-sm btn-outline-danger" id="deleteVendorTemplateBtn"><i class="iconfont icon-shanchu"></i> 删除此厂商</button>' : '');
+            const delBtn = document.getElementById('deleteVendorTemplateBtn');
+            if (delBtn) {
+                delBtn.addEventListener('click', function() {
+                    vendorTemplatesDraft = vendorTemplatesDraft.filter(function(t) { return t.id !== template.id; });
+                    selectedVendorTemplateId = vendorTemplatesDraft[0] ? vendorTemplatesDraft[0].id : null;
+                    renderVendorTemplatesPanel();
+                });
+            }
+        }
+
+        function renderVendorTemplatesPanel() {
+            const list = document.getElementById('vendorTemplateList');
+            if (!list) return;
+            list.innerHTML = vendorTemplatesDraft.map(function(t) {
+                const suffixHint = (t.suffixes || []).slice(0, 2).join(' ') + ((t.suffixes || []).length > 2 ? '…' : '');
+                const active = t.id === selectedVendorTemplateId ? ' active' : '';
+                return '<button type="button" class="list-group-item list-group-item-action' + active + '" data-vendor-id="' + escapeHtml(t.id) + '">' +
+                    '<div class="fw-semibold">' + escapeHtml(t.name || t.id) + '</div>' +
+                    '<small class="text-muted">' + escapeHtml(suffixHint) + '</small></button>';
+            }).join('');
+            list.querySelectorAll('[data-vendor-id]').forEach(function(btn) {
+                btn.addEventListener('click', function() {
+                    persistVendorEditorToDraft();
+                    selectedVendorTemplateId = btn.dataset.vendorId;
+                    renderVendorTemplatesPanel();
+                });
+            });
+            const current = vendorTemplatesDraft.find(function(t) { return t.id === selectedVendorTemplateId; });
+            renderVendorTemplateEditor(current);
+        }
+
+        function loadVendorTemplatesFromConfig(templates) {
+            vendorTemplatesDraft = (templates || []).map(function(t) {
+                return {
+                    id: t.id,
+                    name: t.name,
+                    websiteUrl: t.websiteUrl || '',
+                    renewLink: t.renewLink || '',
+                    suffixes: Array.isArray(t.suffixes) ? t.suffixes.slice() : [],
+                    renewWindowDays: t.renewWindowDays ?? 0,
+                    defaultNotifyDays: t.defaultNotifyDays ?? 30,
+                    whois: t.whois || '',
+                    auth: t.auth ? Object.assign({}, t.auth) : null,
+                    builtin: !!t.builtin,
+                };
+            });
+            selectedVendorTemplateId = vendorTemplatesDraft[0] ? vendorTemplatesDraft[0].id : null;
+            renderVendorTemplatesPanel();
+        }
+
+        function collectVendorTemplates() {
+            persistVendorEditorToDraft();
+            return vendorTemplatesDraft.map(function(t) {
+                const out = {
+                    id: t.id,
+                    name: t.name,
+                    websiteUrl: t.websiteUrl || '',
+                    renewLink: t.renewLink || '',
+                    suffixes: t.suffixes || [],
+                    renewWindowDays: t.renewWindowDays ?? 0,
+                    defaultNotifyDays: t.defaultNotifyDays ?? 30,
+                    whois: t.whois || '',
+                };
+                if (t.auth) out.auth = t.auth;
+                return out;
+            });
+        }
+
+        const addVendorBtn = document.getElementById('addVendorTemplateBtn');
+        if (addVendorBtn) {
+            addVendorBtn.addEventListener('click', function() {
+                persistVendorEditorToDraft();
+                const newId = 'v_' + Date.now().toString(36);
+                vendorTemplatesDraft.push({
+                    id: newId,
+                    name: '新厂商',
+                    websiteUrl: '',
+                    renewLink: '',
+                    suffixes: ['.example.com'],
+                    renewWindowDays: 0,
+                    defaultNotifyDays: 30,
+                    whois: '',
+                    auth: null,
+                    builtin: false,
+                });
+                selectedVendorTemplateId = newId;
+                renderVendorTemplatesPanel();
+            });
+        }
         let currentSortField = 'suffix'; // 默认排序字段改为域名后缀
         let currentSortOrder = 'asc'; // 默认排序顺序
         let currentCategoryFilter = 'all'; // 当前分类筛选
@@ -4699,22 +5094,15 @@ const getHTMLContent = (title) => `
                     return;
                 }
                 
-                // 验证是否为一级域名（只能有一个点），pp.ua及DigitalPlat特定域名除外（允许二级域名）
-                const dotCount = domain.split('.').length - 1;
-                const lowerDomain = domain.toLowerCase();
-                const isPpUa = lowerDomain.endsWith('.pp.ua');
-                const isEuCc = lowerDomain.endsWith('.eu.cc');
-                const isDigitalPlat = lowerDomain.endsWith('.qzz.io') || lowerDomain.endsWith('.dpdns.org') || lowerDomain.endsWith('.us.kg') || lowerDomain.endsWith('.xx.kg');
-                const isStackryze = lowerDomain.endsWith('.indevs.in') || lowerDomain.endsWith('.sryze.cc') || lowerDomain.endsWith('.ryzedns.org') || lowerDomain.endsWith('.nx.kg');
-                const isDnshe = lowerDomain.endsWith('.de5.net') || lowerDomain.endsWith('.us.ci') || lowerDomain.endsWith('.cc.cd') || lowerDomain.endsWith('.bot.cd') ||
-                    lowerDomain.endsWith('.ccwu.cc') || lowerDomain.endsWith('.bbroot.com') || lowerDomain.endsWith('.bbroott.com') ||
-                    lowerDomain.endsWith('.cn.mt') || lowerDomain.endsWith('.onlydev.cc') || lowerDomain.endsWith('.ddns.ge');
-
-                if (dotCount !== 1 && !((isPpUa || isEuCc || isDigitalPlat || isStackryze || isDnshe) && dotCount === 2)) {
-                    if (dotCount === 0) {
+                const templates = getActiveVendorTemplates();
+                const dots = domainAllowedDotsFrontend(domain, templates);
+                if (dots.dotCount !== dots.allowedDots) {
+                    if (dots.dotCount === 0) {
                         showWhoisStatus('请输入完整的域名（如：example.com）', 'danger');
+                    } else if (dots.allowedDots === 1 && dots.dotCount > 1) {
+                        showWhoisStatus('只能查询一级域名，不支持二级域名查询（检测到' + dots.dotCount + '个点）', 'danger');
                     } else {
-                        showWhoisStatus('只能查询一级域名，不支持二级域名查询（检测到' + dotCount + '个点）', 'danger');
+                        showWhoisStatus('域名层级与厂商后缀不匹配', 'danger');
                     }
                     return;
                 }
@@ -5499,19 +5887,7 @@ const getHTMLContent = (title) => `
                     document.getElementById('telegramToken').disabled = false;
                 }
 
-                const renewLinks = telegramConfig.defaultRenewLinks || {};
-                document.getElementById('defaultRenewLinkNicUa').value = renewLinks.nicUa || '';
-                document.getElementById('defaultRenewLinkGname').value = renewLinks.gname || '';
-                document.getElementById('defaultRenewLinkDigitalPlat').value = renewLinks.digitalPlat || '';
-                document.getElementById('defaultRenewLinkStackryze').value = renewLinks.stackryze || '';
-                document.getElementById('defaultRenewLinkDnshe').value = renewLinks.dnshe || '';
-
-                const renewWindows = telegramConfig.renewWindowDays || {};
-                document.getElementById('renewWindowNicUa').value = renewWindows.nicUa ?? 0;
-                document.getElementById('renewWindowGname').value = renewWindows.gname ?? 90;
-                document.getElementById('renewWindowDigitalPlat').value = renewWindows.digitalPlat ?? 0;
-                document.getElementById('renewWindowStackryze').value = renewWindows.stackryze ?? 60;
-                document.getElementById('renewWindowDnshe').value = renewWindows.dnshe ?? 180;
+                loadVendorTemplatesFromConfig(telegramConfig.vendorTemplates || []);
                 loadPushChannelsFromConfig(telegramConfig.pushChannels || {});
             } catch (error) {
                 // 忽略Telegram配置加载失败
@@ -5529,20 +5905,8 @@ const getHTMLContent = (title) => `
             const botToken = document.getElementById('telegramToken').value;
             const chatId = document.getElementById('telegramChatId').value;
             const notifyDays = parseInt(document.getElementById('notifyDays').value) || 30;
-            const defaultRenewLinks = {
-                nicUa: document.getElementById('defaultRenewLinkNicUa').value.trim(),
-                gname: document.getElementById('defaultRenewLinkGname').value.trim(),
-                digitalPlat: document.getElementById('defaultRenewLinkDigitalPlat').value.trim(),
-                stackryze: document.getElementById('defaultRenewLinkStackryze').value.trim(),
-                dnshe: document.getElementById('defaultRenewLinkDnshe').value.trim(),
-            };
-            const renewWindowDays = {
-                nicUa: document.getElementById('renewWindowNicUa').value,
-                gname: document.getElementById('renewWindowGname').value,
-                digitalPlat: document.getElementById('renewWindowDigitalPlat').value,
-                stackryze: document.getElementById('renewWindowStackryze').value,
-                dnshe: document.getElementById('renewWindowDnshe').value,
-            };
+            persistVendorEditorToDraft();
+            const vendorTemplates = collectVendorTemplates();
             
             try {
                 const response = await fetch('/api/telegram/config', {
@@ -5557,8 +5921,7 @@ const getHTMLContent = (title) => `
                         botToken,
                         chatId,
                         notifyDays,
-                        defaultRenewLinks,
-                        renewWindowDays,
+                        vendorTemplates,
                         pushChannels: collectPushChannels(),
                     })
                 });
@@ -5574,6 +5937,7 @@ const getHTMLContent = (title) => `
                 }
                 
                 telegramConfig = await response.json();
+                loadVendorTemplatesFromConfig(telegramConfig.vendorTemplates || []);
                 showAlert('success', '设置保存成功');
                 await renderDomainList();
                 
@@ -5620,19 +5984,64 @@ const getHTMLContent = (title) => `
         }
         
         // 渲染域名列表
-        // keep in sync: getEffectiveRenewLink / getRenewLinkProviderId / isRenewLinkAvailable / isStackryzeDomain / isDnsheDomain (backend exports)
-        function isStackryzeDomainFrontend(name) {
-            const lower = (name || '').toLowerCase();
-            return lower.endsWith('.indevs.in') || lower.endsWith('.sryze.cc') ||
-                lower.endsWith('.ryzedns.org') || lower.endsWith('.nx.kg');
+        // keep in sync: getEffectiveRenewLink / matchVendorTemplate / isRenewLinkAvailable (backend exports)
+        function getEffectiveRenewLinkFrontend(domain) {
+            if (!domain) return '';
+            const custom = domain.renewLink != null ? String(domain.renewLink).trim() : '';
+            if (custom) {
+                const safe = safeUrl(custom);
+                return safe || custom;
+            }
+            const vendor = matchVendorTemplateFrontend(domain.name, getActiveVendorTemplates());
+            if (vendor && vendor.renewLink) {
+                const safe = safeUrl(vendor.renewLink);
+                return safe || vendor.renewLink;
+            }
+            return '';
         }
 
-        function isDnsheDomainFrontend(name) {
-            const lower = (name || '').toLowerCase();
-            return lower.endsWith('.de5.net') || lower.endsWith('.us.ci') || lower.endsWith('.cc.cd') ||
-                lower.endsWith('.bot.cd') || lower.endsWith('.ccwu.cc') || lower.endsWith('.bbroot.com') ||
-                lower.endsWith('.bbroott.com') || lower.endsWith('.cn.mt') || lower.endsWith('.onlydev.cc') ||
-                lower.endsWith('.ddns.ge');
+        function getRenewLinkAvailabilityFrontend(domain) {
+            const custom = domain?.renewLink != null ? String(domain.renewLink).trim() : '';
+            const daysLeft = domain.daysLeft;
+            if (custom) {
+                return { available: true, daysLeft, windowDays: 0 };
+            }
+            const vendor = matchVendorTemplateFrontend(domain?.name, getActiveVendorTemplates());
+            if (!vendor) {
+                return { available: true, daysLeft, windowDays: 0 };
+            }
+            const windowDays = vendor.renewWindowDays ?? 0;
+            if (!windowDays || windowDays <= 0) {
+                return { available: true, daysLeft, windowDays: 0, providerId: vendor.id };
+            }
+            if (daysLeft === undefined || daysLeft === null) {
+                return { available: true, daysLeft, windowDays, providerId: vendor.id };
+            }
+            const available = daysLeft <= windowDays;
+            const daysUntilWindow = available ? 0 : daysLeft - windowDays;
+            return { available, daysLeft, windowDays, daysUntilWindow, providerId: vendor.id };
+        }
+
+        function updateRenewLinkHint() {
+            const name = document.getElementById('domainName').value || '';
+            const vendor = matchVendorTemplateFrontend(name, getActiveVendorTemplates());
+            const hint = document.getElementById('renewLinkHint');
+            const field = document.getElementById('renewLink');
+            let hintText = '域名续费的直达链接；留空则按厂商模板使用默认链接';
+            const defaultLink = vendor && vendor.renewLink ? vendor.renewLink : '';
+            if (defaultLink) {
+                hintText = '留空则使用默认: ' + defaultLink;
+                if (!field.value.trim()) field.placeholder = defaultLink;
+            } else if (!field.value.trim()) {
+                field.placeholder = '留空则使用厂商模板中的默认链接';
+            }
+            if (vendor && !field.value.trim()) {
+                const windowDays = vendor.renewWindowDays ?? 0;
+                if (windowDays > 0) {
+                    hintText += '；需在到期前 ' + windowDays + ' 天内方可续费';
+                }
+            }
+            hint.textContent = hintText;
         }
 
         // keep in sync: normalizeNameservers / isCloudflareNameserver / isCloudflareDelegated / getCloudflareHostInfo (backend exports)
@@ -5659,84 +6068,6 @@ const getHTMLContent = (title) => `
             if (!info || !info.label) return '';
             return '<span class="badge ' + escapeHtml(info.badgeClass || 'bg-secondary') + ' ms-1" title="' +
                 escapeHtml(info.title || info.label) + '">' + escapeHtml(info.label) + '</span>';
-        }
-
-        function getEffectiveRenewLinkFrontend(domain) {
-            if (!domain) return '';
-            const custom = domain.renewLink != null ? String(domain.renewLink).trim() : '';
-            if (custom) {
-                const safe = safeUrl(custom);
-                return safe || custom;
-            }
-            const links = telegramConfig.defaultRenewLinks || {};
-            const name = (domain.name || '').toLowerCase();
-            if (name.endsWith('.pp.ua')) return links.nicUa || '';
-            if (name.endsWith('.eu.cc')) return links.gname || '';
-            if (name.endsWith('.qzz.io') || name.endsWith('.dpdns.org') ||
-                name.endsWith('.us.kg') || name.endsWith('.xx.kg')) return links.digitalPlat || '';
-            if (isStackryzeDomainFrontend(name)) return links.stackryze || '';
-            if (isDnsheDomainFrontend(name)) return links.dnshe || '';
-            return '';
-        }
-
-        function getRenewLinkAvailabilityFrontend(domain) {
-            const custom = domain?.renewLink != null ? String(domain.renewLink).trim() : '';
-            const daysLeft = domain.daysLeft;
-            if (custom) {
-                return { available: true, daysLeft, windowDays: 0 };
-            }
-            const name = (domain?.name || '').toLowerCase();
-            const windows = telegramConfig.renewWindowDays || {};
-            let providerId = null;
-            if (name.endsWith('.pp.ua')) providerId = 'nicUa';
-            else if (name.endsWith('.eu.cc')) providerId = 'gname';
-            else if (name.endsWith('.qzz.io') || name.endsWith('.dpdns.org') ||
-                     name.endsWith('.us.kg') || name.endsWith('.xx.kg')) providerId = 'digitalPlat';
-            else if (isStackryzeDomainFrontend(name)) providerId = 'stackryze';
-            else if (isDnsheDomainFrontend(name)) providerId = 'dnshe';
-            if (!providerId) {
-                return { available: true, daysLeft, windowDays: 0 };
-            }
-            const windowDays = windows[providerId] ?? 0;
-            if (!windowDays || windowDays <= 0) {
-                return { available: true, daysLeft, windowDays: 0, providerId };
-            }
-            if (daysLeft === undefined || daysLeft === null) {
-                return { available: true, daysLeft, windowDays, providerId };
-            }
-            const available = daysLeft <= windowDays;
-            const daysUntilWindow = available ? 0 : daysLeft - windowDays;
-            return { available, daysLeft, windowDays, daysUntilWindow, providerId };
-        }
-
-        function updateRenewLinkHint() {
-            const name = (document.getElementById('domainName').value || '').toLowerCase();
-            const links = telegramConfig.defaultRenewLinks || {};
-            const windows = telegramConfig.renewWindowDays || {};
-            let defaultLink = '';
-            let providerId = null;
-            if (name.endsWith('.pp.ua')) { defaultLink = links.nicUa || ''; providerId = 'nicUa'; }
-            else if (name.endsWith('.eu.cc')) { defaultLink = links.gname || ''; providerId = 'gname'; }
-            else if (name.endsWith('.qzz.io') || name.endsWith('.dpdns.org') ||
-                     name.endsWith('.us.kg') || name.endsWith('.xx.kg')) { defaultLink = links.digitalPlat || ''; providerId = 'digitalPlat'; }
-            else if (isStackryzeDomainFrontend(name)) { defaultLink = links.stackryze || ''; providerId = 'stackryze'; }
-            else if (isDnsheDomainFrontend(name)) { defaultLink = links.dnshe || ''; providerId = 'dnshe'; }
-            const hint = document.getElementById('renewLinkHint');
-            const field = document.getElementById('renewLink');
-            let hintText = '域名续费的直达链接；留空则按服务商使用系统设置中的默认链接';
-            if (defaultLink) {
-                hintText = '留空则使用默认: ' + defaultLink;
-                if (!field.value.trim()) field.placeholder = defaultLink;
-            } else if (!field.value.trim()) {
-                field.placeholder = '留空则使用系统设置中的默认链接';
-            }
-            if (providerId && !field.value.trim()) {
-                const windowDays = windows[providerId] ?? 0;
-                if (windowDays > 0) {
-                    hintText += '；需在到期前 ' + windowDays + ' 天内方可续费';
-                }
-            }
-            hint.textContent = hintText;
         }
 
         async function renderDomainList() {
@@ -6181,10 +6512,6 @@ const getHTMLContent = (title) => `
 
                     const cloudflareInfo = getCloudflareHostInfoFrontend(domain);
                     const cloudflareBadgeHtml = renderCloudflareBadgeHtml(cloudflareInfo);
-                    const cloudflareDetailHtml = cloudflareInfo
-                        ? '<p class="card-text mb-1 text-nowrap" style="overflow: hidden; text-overflow: ellipsis;"><i class="iconfont icon-earth-full"></i><strong>Cloudflare:</strong> ' +
-                          renderCloudflareBadgeHtml(cloudflareInfo) + '</p>'
-                        : '';
 
                                     const cardHtml = '<div class="card domain-card ' + statusClass + ' mb-2">' +
                 '<div class="card-header">' +
@@ -6232,7 +6559,6 @@ const getHTMLContent = (title) => `
                         '<div class="d-flex justify-content-between align-items-start mb-2" style="position: relative;">' +
                         '<div class="flex-grow-1" style="padding-right: ' + textPaddingRight + '; min-width: 0;">' +
                         (domain.registrar ? '<p class="card-text mb-1" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; width: 100%; display: block;"><i class="iconfont icon-house-chimney"></i><strong>注册厂商:</strong> ' + escapeHtml(domain.registrar) + '</p>' : '') +
-                        cloudflareDetailHtml +
                         (domain.registeredAccount ? '<p class="card-text mb-1" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; width: 100%; display: block;"><i class="iconfont icon-user"></i><strong>注册账号:</strong> ' + escapeHtml(domain.registeredAccount) + '</p>' : '') +
                         (domain.registrationDate ? '<p class="card-text mb-1 text-nowrap" style="overflow: hidden; text-overflow: ellipsis;"><i class="iconfont icon-calendar-days"></i><strong>注册时间:</strong>' + formatDate(domain.registrationDate) + '</p>' : '') +
                         '<p class="card-text mb-1 text-nowrap" style="overflow: hidden; text-overflow: ellipsis;"><i class="iconfont icon-rili"></i><strong>到期日期:</strong>' + formatDate(domain.expiryDate) + '</p>' +
@@ -7420,20 +7746,12 @@ const getHTMLContent = (title) => `
                     document.getElementById('renewLink').classList.remove('auto-filled');
                     
                     const domainName = document.getElementById('domainName').value.toLowerCase();
+                    const vendorMatch = matchVendorTemplateFrontend(domainName, getActiveVendorTemplates());
 
                     // 填充注册商
                     let registrarName = whoisData.registrar;
-                    // 针对特定域名强制设置注册商名称
-                    if (domainName.endsWith('.pp.ua')) {
-                        registrarName = 'NIC.UA';
-                    } else if (domainName.endsWith('.eu.cc')) {
-                        registrarName = 'Gname.com';
-                    } else if (domainName.endsWith('.qzz.io') || domainName.endsWith('.dpdns.org') || domainName.endsWith('.us.kg') || domainName.endsWith('.xx.kg')) {
-                        registrarName = 'DigitalPlat.org';
-                    } else if (isStackryzeDomainFrontend(domainName)) {
-                        registrarName = 'Stackryze Domains';
-                    } else if (isDnsheDomainFrontend(domainName)) {
-                        registrarName = 'DNSHE';
+                    if (vendorMatch && vendorMatch.name) {
+                        registrarName = vendorMatch.name;
                     }
 
                     if (registrarName) {
@@ -8058,41 +8376,36 @@ async function handleApiRequest(request) {
         return jsonResponse({ error: '域名格式不正确' }, 400);
       }
       
-      // 验证是否为一级域名（只能有一个点），pp.ua及DigitalPlat特定域名除外
+      // 验证域名层级：一级域名或匹配厂商模板后缀
       const dotCount = domain.split('.').length - 1;
       const lowerDomain = domain.toLowerCase();
-      const isPpUa = lowerDomain.endsWith('.pp.ua');
-      const isEuCc = lowerDomain.endsWith('.eu.cc');
-      const isDigitalPlat = lowerDomain.endsWith('.qzz.io') || lowerDomain.endsWith('.dpdns.org') || lowerDomain.endsWith('.us.kg') || lowerDomain.endsWith('.xx.kg');
-      const isStackryze = isStackryzeDomain(lowerDomain);
-      const isDnshe = isDnsheDomain(lowerDomain);
-
-      if (dotCount !== 1 && !((isPpUa || isEuCc || isDigitalPlat || isStackryze || isDnshe) && dotCount === 2)) {
-        if (dotCount === 0) {
-          return jsonResponse({ error: '请输入完整的域名（如：example.com）' }, 400);
-        } else {
-          return jsonResponse({ error: '只能查询一级域名，不支持二级域名查询' }, 400);
+      const templates = await getResolvedVendorTemplates();
+      const vendor = matchVendorTemplate(lowerDomain, templates);
+      let allowedDots = 1;
+      if (vendor) {
+        for (const s of vendor.suffixes || []) {
+          const norm = normalizeVendorSuffix(s);
+          if (lowerDomain.endsWith(norm)) {
+            allowedDots = Math.max(allowedDots, norm.split('.').filter(Boolean).length);
+          }
         }
       }
-      
-      let result;
-      if (isPpUa) {
-        // 使用专门的 nic.ua 接口查询 pp.ua 域名
-        result = await queryPpUaWhois(domain);
-      } else if (isEuCc) {
-        // 使用 gname.com WHOIS 查询 eu.cc 域名
-        result = await queryEuCcWhois(domain);
-      } else if (isDigitalPlat) {
-        // 使用 DigitalPlat 接口查询特定二级域名
-        result = await queryDigitalPlatWhois(domain);
-      } else if (isStackryze) {
-        result = await queryStackryzeWhois(domain);
-      } else if (isDnshe) {
-        result = await queryDnsheWhois(domain);
-      } else {
-        // 一级域名：RDAP 查询（免费无 Key）
-        result = await queryFirstLevelDomain(domain);
+
+      if (dotCount !== allowedDots) {
+        if (dotCount === 0) {
+          return jsonResponse({ error: '请输入完整的域名（如：example.com）' }, 400);
+        }
+        if (allowedDots === 1 && dotCount > 1) {
+          return jsonResponse({ error: '只能查询一级域名，不支持二级域名查询' }, 400);
+        }
+        return jsonResponse({ error: '域名层级与厂商后缀不匹配' }, 400);
       }
+
+      const whoisFn = getWhoisQueryFunction(domain, templates);
+      if (!whoisFn) {
+        return jsonResponse({ error: '不支持该域名的 WHOIS 查询' }, 400);
+      }
+      const result = await whoisFn(domain);
       
       return jsonResponse(result);
     } catch (error) {
@@ -8409,7 +8722,8 @@ async function syncDomainNameservers(id) {
   }
 
   const domain = domains[index];
-  const whoisFn = getWhoisQueryFunction(domain.name);
+  const templates = await getResolvedVendorTemplates();
+  const whoisFn = getWhoisQueryFunction(domain.name, templates);
   if (!whoisFn) {
     throw new Error('该域名不支持自动查询 NS');
   }
@@ -8457,18 +8771,19 @@ async function syncDomainsNameservers({ ids = null } = {}) {
   const idSet = ids && ids.length ? new Set(ids) : null;
   const results = [];
   let kvDirty = false;
+  const templates = await getResolvedVendorTemplates();
 
   for (let i = 0; i < domains.length; i++) {
     const domain = domains[i];
     if (idSet && !idSet.has(domain.id)) continue;
 
-    const whoisFn = getWhoisQueryFunction(domain.name);
+    const whoisFn = getWhoisQueryFunction(domain.name, templates);
     if (!whoisFn) {
       results.push({ name: domain.name, status: 'skipped', reason: 'unsupported' });
       continue;
     }
 
-    if (isDnsheDomain(domain.name) && normalizeNameservers(domain.nameservers).length) {
+    if (isDnsheDomain(domain.name, templates) && normalizeNameservers(domain.nameservers).length) {
       results.push({
         name: domain.name,
         status: 'ok',
@@ -8535,7 +8850,8 @@ async function syncDomainExpiry(id) {
   }
 
   const domain = domains[index];
-  const whoisFn = getWhoisQueryFunction(domain.name);
+  const templates = await getResolvedVendorTemplates();
+  const whoisFn = getWhoisQueryFunction(domain.name, templates);
   if (!whoisFn) {
     throw new Error('该域名不支持自动查询，请通过「编辑」手动更新到期日期');
   }
@@ -8637,8 +8953,9 @@ async function getTelegramConfig() {
     expandDomains: !!config.expandDomains, // 返回域名展开配置
     progressStyle: config.progressStyle || 'bar', // 返回进度样式配置
     cardLayout: config.cardLayout || '4', // 返回卡片布局配置
-    defaultRenewLinks: resolveDefaultRenewLinks(config.defaultRenewLinks),
-    renewWindowDays: resolveRenewWindowDays(config.renewWindowDays),
+    defaultRenewLinks: resolveDefaultRenewLinks(config),
+    renewWindowDays: resolveRenewWindowDays(config),
+    vendorTemplates: resolveVendorTemplates(config.vendorTemplates, config),
     notifyChannel: resolveNotifyChannel(config),
     pushChannels: sanitizePushChannels(config.pushChannels),
   };
@@ -8668,6 +8985,12 @@ async function saveTelegramConfig(configData) {
     }
   }
   
+  const vendorTemplates = sanitizeVendorTemplatesForSave(
+    configData.vendorTemplates,
+    configData.defaultRenewLinks,
+    configData.renewWindowDays,
+  );
+
   // 保存配置到KV - 即使值为空也保存，表示用户有意清除值
   const config = {
     enabled,
@@ -8678,8 +9001,7 @@ async function saveTelegramConfig(configData) {
     expandDomains: !!configData.expandDomains, // 保存域名展开配置
     progressStyle: configData.progressStyle || 'bar', // 保存进度样式配置
     cardLayout: configData.cardLayout || '4', // 保存卡片布局配置
-    defaultRenewLinks: sanitizeDefaultRenewLinks(configData.defaultRenewLinks),
-    renewWindowDays: sanitizeRenewWindowDays(configData.renewWindowDays),
+    vendorTemplates,
     pushChannels: sanitizePushChannels(configData.pushChannels),
   };
   
@@ -8724,8 +9046,9 @@ async function saveTelegramConfig(configData) {
     expandDomains: config.expandDomains, // 返回域名展开配置
     progressStyle: config.progressStyle, // 返回进度样式配置
     cardLayout: config.cardLayout, // 返回卡片布局配置
-    defaultRenewLinks: resolveDefaultRenewLinks(config.defaultRenewLinks),
-    renewWindowDays: resolveRenewWindowDays(config.renewWindowDays),
+    defaultRenewLinks: resolveDefaultRenewLinks(config),
+    renewWindowDays: resolveRenewWindowDays(config),
+    vendorTemplates: resolveVendorTemplates(config.vendorTemplates, config),
     notifyChannel: config.notifyChannel,
     pushChannels: sanitizePushChannels(config.pushChannels),
   };
@@ -8747,7 +9070,7 @@ async function testTelegramNotification() {
   const plainTitle = '🚨 域名到期测试通知 🚨';
   const htmlTitle = '🚨 <b>域名到期测试通知</b> 🚨';
   const separator = '=======================';
-  const testRenewLink = getEffectiveRenewLink({ name: 'xx.pp.ua', renewLink: '' }, config.defaultRenewLinks);
+  const testRenewLink = getEffectiveRenewLink({ name: 'xx.pp.ua', renewLink: '' }, config);
 
   const bodyPlain = [
     '🌍 域名: xx.pp.ua',
@@ -8825,8 +9148,9 @@ async function getTelegramConfigWithToken() {
     botToken: config.botToken || '',
     chatId: config.chatId || '',
     notifyDays: config.notifyDays || 30,
-    defaultRenewLinks: resolveDefaultRenewLinks(config.defaultRenewLinks),
-    renewWindowDays: resolveRenewWindowDays(config.renewWindowDays),
+    defaultRenewLinks: resolveDefaultRenewLinks(config),
+    renewWindowDays: resolveRenewWindowDays(config),
+    vendorTemplates: resolveVendorTemplates(config.vendorTemplates, config),
     pushChannels: sanitizePushChannels(config.pushChannels),
   };
 }
@@ -9551,13 +9875,14 @@ async function checkExpiringDomains() {
 
   const telegramConfig = await getTelegramConfigWithToken();
   const globalNotifyDays = telegramConfig.notifyDays || 30;
+  const templates = resolveVendorTemplates(telegramConfig.vendorTemplates, telegramConfig);
 
   // 第一步：对所有支持 WHOIS 的域名检测到期时间并同步本地记录
   const updatedDomains = [];
   let kvNeedUpdate = false;
 
   for (const domain of domains) {
-    const whoisFn = getWhoisQueryFunction(domain.name);
+    const whoisFn = getWhoisQueryFunction(domain.name, templates);
     if (!whoisFn) continue;
 
     try {
