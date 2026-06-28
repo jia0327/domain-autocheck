@@ -206,15 +206,12 @@ export function isCloudflareNameserver(ns) {
 }
 
 export function isCloudflareDelegated(meta) {
-  const zoneId = String(meta?.cloudflareZoneId || '').trim();
-  if (zoneId) return true;
   return normalizeNameservers(meta?.nameservers).some(isCloudflareNameserver);
 }
 
 export function getCloudflareHostInfo(meta) {
   if (!isCloudflareDelegated(meta)) return null;
   const nameservers = normalizeNameservers(meta?.nameservers).filter(isCloudflareNameserver);
-  const zoneId = String(meta?.cloudflareZoneId || '').trim();
   const nsText = nameservers.join(', ');
   return {
     status: 'delegated',
@@ -5582,10 +5579,8 @@ const getHTMLContent = (title) => `
 
         function getCloudflareHostInfoFrontend(domain) {
             if (!domain) return null;
-            const zoneId = domain.cloudflareZoneId != null ? String(domain.cloudflareZoneId).trim() : '';
             const nameservers = Array.isArray(domain.nameservers) ? domain.nameservers : [];
-            const delegated = zoneId || nameservers.some(isCloudflareNameserverFrontend);
-            if (!delegated) return null;
+            if (!nameservers.some(isCloudflareNameserverFrontend)) return null;
             const cfNs = nameservers.filter(isCloudflareNameserverFrontend);
             const nsText = cfNs.join(', ');
             return {

@@ -25,8 +25,12 @@ describe('isCloudflareDelegated', () => {
     })).toBe(true);
   });
 
-  it('returns true when zone id is present', () => {
-    expect(isCloudflareDelegated({ cloudflareZoneId: 'zone123' })).toBe(true);
+  it('returns false when only zone id is present without Cloudflare NS', () => {
+    expect(isCloudflareDelegated({ cloudflareZoneId: 'zone123' })).toBe(false);
+    expect(isCloudflareDelegated({
+      cloudflareZoneId: 'zone123',
+      nameservers: ['ns1.dnshe.com', 'ns2.dnshe.com'],
+    })).toBe(false);
   });
 
   it('returns false for DNSHE-only nameservers', () => {
