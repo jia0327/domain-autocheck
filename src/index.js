@@ -122,6 +122,141 @@ function applyExpirySyncFromWhois(record, whoisExpiry, now) {
   return { changed: true, renewalDetected, updated, oldExpiryDate, whoisExpiry, addedDays };
 }
 
+// ================================
+// 默认续费链接（按服务商）
+// ================================
+// 内置默认值；系统设置可覆盖。域名自定义 renewLink 优先于默认。
+
+const RENEW_LINK_BUILTIN_DEFAULTS = {
+  nicUa: 'https://nic.ua/en/my/domains',
+  gname: 'https://www.gname.com/tld-eu-cc.html#registered',
+  digitalPlat: 'https://dash.domain.digitalplat.org/panel/main?page=%2Fpanel%2Fdomains',
+};
+
+// 到期前多少天内才开放续费；0 表示不限制。Gname eu.cc 免费续费需在到期 90 天内。
+const RENEW_WINDOW_BUILTIN_DEFAULTS = {
+  nicUa: 0,
+  gname: 90,
+  digitalPlat: 0,
+};
+
+export function getRenewLinkProviderId(domainName) {
+  const lower = (domainName || '').toLowerCase();
+  if (lower.endsWith('.pp.ua')) return 'nicUa';
+  if (lower.endsWith('.eu.cc')) return 'gname';
+  if (lower.endsWith('.qzz.io') || lower.endsWith('.dpdns.org') ||
+      lower.endsWith('.us.kg') || lower.endsWith('.xx.kg')) return 'digitalPlat';
+  return null;
+}
+
+export function resolveDefaultRenewLinks(stored) {
+  const out = { ...RENEW_LINK_BUILTIN_DEFAULTS };
+  if (!stored || typeof stored !== 'object') return out;
+  for (const id of Object.keys(RENEW_LINK_BUILTIN_DEFAULTS)) {
+    if (stored[id] !== undefined && stored[id] !== null && String(stored[id]).trim() !== '') {
+      const url = safeUrl(String(stored[id]).trim());
+      if (url) out[id] = url;
+    }
+  }
+  return out;
+}
+
+export function getEffectiveRenewLink(domain, renewLinksConfig) {
+  if (!domain) return '';
+  const custom = domain.renewLink != null ? String(domain.renewLink).trim() : '';
+  if (custom) {
+    const safe = safeUrl(custom);
+    return safe || custom;
+  }
+  const providerId = getRenewLinkProviderId(domain.name);
+  const links = renewLinksConfig || RENEW_LINK_BUILTIN_DEFAULTS;
+  if (providerId && links[providerId]) return links[providerId];
+  return '';
+}
+
+export function computeDaysLeft(expiryDate, now = new Date()) {
+  if (!expiryDate) return null;
+  const expiry = new Date(expiryDate);
+  if (Number.isNaN(expiry.getTime())) return null;
+  return Math.ceil((expiry.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+}
+
+export function resolveRenewWindowDays(stored) {
+  const out = { ...RENEW_WINDOW_BUILTIN_DEFAULTS };
+  if (!stored || typeof stored !== 'object') return out;
+  for (const id of Object.keys(RENEW_WINDOW_BUILTIN_DEFAULTS)) {
+    if (stored[id] !== undefined && stored[id] !== null && String(stored[id]).trim() !== '') {
+      const n = parseInt(String(stored[id]), 10);
+      if (!Number.isNaN(n) && n >= 0 && n <= 3650) out[id] = n;
+    }
+  }
+  return out;
+}
+
+export function isRenewLinkAvailable(domain, renewWindowConfig, now = new Date()) {
+  const custom = domain?.renewLink != null ? String(domain.renewLink).trim() : '';
+  const daysLeft = computeDaysLeft(domain?.expiryDate, now);
+  if (custom) {
+    return { available: true, daysLeft, windowDays: 0, bypassWindow: true };
+  }
+  const providerId = getRenewLinkProviderId(domain?.name);
+  const windows = renewWindowConfig || RENEW_WINDOW_BUILTIN_DEFAULTS;
+  if (!providerId) {
+    return { available: true, daysLeft, windowDays: 0, providerId: null };
+  }
+  const windowDays = windows[providerId] ?? 0;
+  if (!windowDays || windowDays <= 0) {
+    return { available: true, daysLeft, windowDays: 0, providerId };
+  }
+  if (daysLeft === null) {
+    return { available: true, daysLeft: null, windowDays, providerId };
+  }
+  const available = daysLeft <= windowDays;
+  const daysUntilWindow = available ? 0 : daysLeft - windowDays;
+  return { available, daysLeft, windowDays, daysUntilWindow, providerId };
+}
+
+function sanitizeDefaultRenewLinks(input) {
+  const stored = {};
+  if (!input || typeof input !== 'object') return stored;
+  for (const id of Object.keys(RENEW_LINK_BUILTIN_DEFAULTS)) {
+    if (input[id] !== undefined && input[id] !== null) {
+      const trimmed = String(input[id]).trim();
+      if (trimmed) {
+        const url = safeUrl(trimmed);
+        if (url) stored[id] = url;
+      }
+    }
+  }
+  return stored;
+}
+
+function sanitizeRenewWindowDays(input) {
+  const stored = {};
+  if (!input || typeof input !== 'object') return stored;
+  for (const id of Object.keys(RENEW_WINDOW_BUILTIN_DEFAULTS)) {
+    if (input[id] !== undefined && input[id] !== null && String(input[id]).trim() !== '') {
+      const n = parseInt(String(input[id]), 10);
+      if (!Number.isNaN(n) && n >= 0 && n <= 3650) stored[id] = n;
+    }
+  }
+  return stored;
+}
+
+function formatRenewLinkNotificationLine(domain, config, useHtmlBold) {
+  const renewLink = getEffectiveRenewLink(domain, config.defaultRenewLinks);
+  const availability = isRenewLinkAvailable(domain, config.renewWindowDays);
+  const labelBold = useHtmlBold ? '<b>点击续期:</b> ' : '点击续期: ';
+  const windowLabel = useHtmlBold ? '<b>续费窗口:</b> ' : '续费窗口: ';
+  if (!renewLink) {
+    return '⚠️ ' + (useHtmlBold ? '<b>点击续期:</b> ' : '点击续期: ') + '未设置续期链接\n';
+  }
+  if (!availability.available) {
+    return '⚠️ ' + windowLabel + '距到期还有 ' + availability.daysLeft + ' 天，需进入到期前 ' + availability.windowDays + ' 天内方可续费\n';
+  }
+  return '⚠️ ' + labelBold + escapeHtmlBackend(renewLink) + '\n';
+}
+
 // JSON响应工具函数
 function jsonResponse(data, status = 200) {
   return new Response(JSON.stringify(data), {
@@ -3255,8 +3390,8 @@ const getHTMLContent = (title) => `
                         <!-- 添加续费链接字段 -->
                         <div class="mb-3">
                             <label for="renewLink" class="form-label"><i class="iconfont icon-link"></i> 续费链接</label>
-                            <input type="url" class="form-control" id="renewLink" placeholder="https://example.com/renew">
-                            <div class="form-text">域名续费的直达链接</div>
+                            <input type="url" class="form-control" id="renewLink" placeholder="留空则使用系统设置中的默认链接">
+                            <div class="form-text" id="renewLinkHint">域名续费的直达链接；留空则按服务商使用系统设置中的默认链接</div>
                         </div>
                         
                         <!-- 上次续期时间设置 -->
@@ -3343,7 +3478,7 @@ const getHTMLContent = (title) => `
     
     <!-- 设置模态框 -->
     <div class="modal fade" id="settingsModal" tabindex="-1">
-        <div class="modal-dialog">
+        <div class="modal-dialog modal-dialog-scrollable">
             <div class="modal-content">
                 <div class="modal-header">
                     <h5 class="modal-title">系统设置</h5>
@@ -3383,6 +3518,40 @@ const getHTMLContent = (title) => `
                                     <input class="form-check-input" type="radio" name="cardLayout" id="cardLayout4" value="4" checked>
                                     <label class="form-check-label" for="cardLayout4">4 列</label>
                                 </div>
+                            </div>
+                        </div>
+                        
+                        <hr style="border-color: rgba(255, 255, 255, 0.1);">
+                        
+                        <h6 class="mb-3" style="display: flex; align-items: center; gap: 5px;"><i class="iconfont icon-link" style="color: white;"></i> 默认续费链接</h6>
+                        <p class="form-text mb-3">按服务商设置默认链接；在域名编辑里填写的<strong>自定义续费链接优先</strong>，留空则使用此处默认值。</p>
+                        <div class="mb-3">
+                            <label for="defaultRenewLinkNicUa" class="form-label">NIC.UA <small class="text-muted">(pp.ua)</small></label>
+                            <input type="url" class="form-control" id="defaultRenewLinkNicUa" placeholder="https://nic.ua/en/my/domains">
+                        </div>
+                        <div class="mb-3">
+                            <label for="defaultRenewLinkGname" class="form-label">Gname <small class="text-muted">(eu.cc)</small></label>
+                            <input type="url" class="form-control" id="defaultRenewLinkGname" placeholder="https://www.gname.com/tld-eu-cc.html#registered">
+                        </div>
+                        <div class="mb-3">
+                            <label for="defaultRenewLinkDigitalPlat" class="form-label">DigitalPlat <small class="text-muted">(qzz.io / dpdns.org / us.kg / xx.kg)</small></label>
+                            <input type="url" class="form-control" id="defaultRenewLinkDigitalPlat" placeholder="https://dash.domain.digitalplat.org/panel/main?page=%2Fpanel%2Fdomains">
+                        </div>
+
+                        <h6 class="mb-2 mt-2" style="font-size: 0.95rem;">续费开放窗口</h6>
+                        <p class="form-text mb-3">部分服务商仅允许在到期前 N 天内续费（如 Gname eu.cc 免费续费需 90 天内）。填 <strong>0</strong> 表示不限制；域名自定义续费链接不受此限制。</p>
+                        <div class="row g-2 mb-3">
+                            <div class="col-md-4">
+                                <label for="renewWindowNicUa" class="form-label">NIC.UA <small class="text-muted">(天)</small></label>
+                                <input type="number" class="form-control" id="renewWindowNicUa" min="0" max="3650" placeholder="0">
+                            </div>
+                            <div class="col-md-4">
+                                <label for="renewWindowGname" class="form-label">Gname <small class="text-muted">(天)</small></label>
+                                <input type="number" class="form-control" id="renewWindowGname" min="0" max="3650" placeholder="90">
+                            </div>
+                            <div class="col-md-4">
+                                <label for="renewWindowDigitalPlat" class="form-label">DigitalPlat <small class="text-muted">(天)</small></label>
+                                <input type="number" class="form-control" id="renewWindowDigitalPlat" min="0" max="3650" placeholder="0">
                             </div>
                         </div>
                         
@@ -3733,6 +3902,8 @@ const getHTMLContent = (title) => `
                 calculateExpiryDate();
             });
             
+            document.getElementById('domainName').addEventListener('input', updateRenewLinkHint);
+
             // WHOIS自动查询按钮
             document.getElementById('whoisQueryBtn').addEventListener('click', async function() {
                 const domainInput = document.getElementById('domainName');
@@ -3894,6 +4065,7 @@ const getHTMLContent = (title) => `
             document.getElementById('addDomainModal').addEventListener('shown.bs.modal', function() {
                 updateNotePreview();
                 updateDomainNotifyDaysUI();
+                updateRenewLinkHint();
             });
             
             // 排序选项点击事件
@@ -4296,6 +4468,16 @@ const getHTMLContent = (title) => `
                     document.getElementById('telegramToken').placeholder = '如已在环境变量中配置则可留空';
                     document.getElementById('telegramToken').disabled = false;
                 }
+
+                const renewLinks = telegramConfig.defaultRenewLinks || {};
+                document.getElementById('defaultRenewLinkNicUa').value = renewLinks.nicUa || '';
+                document.getElementById('defaultRenewLinkGname').value = renewLinks.gname || '';
+                document.getElementById('defaultRenewLinkDigitalPlat').value = renewLinks.digitalPlat || '';
+
+                const renewWindows = telegramConfig.renewWindowDays || {};
+                document.getElementById('renewWindowNicUa').value = renewWindows.nicUa ?? 0;
+                document.getElementById('renewWindowGname').value = renewWindows.gname ?? 90;
+                document.getElementById('renewWindowDigitalPlat').value = renewWindows.digitalPlat ?? 0;
             } catch (error) {
                 // 忽略Telegram配置加载失败
             }
@@ -4311,6 +4493,16 @@ const getHTMLContent = (title) => `
             const botToken = document.getElementById('telegramToken').value;
             const chatId = document.getElementById('telegramChatId').value;
             const notifyDays = parseInt(document.getElementById('notifyDays').value) || 30;
+            const defaultRenewLinks = {
+                nicUa: document.getElementById('defaultRenewLinkNicUa').value.trim(),
+                gname: document.getElementById('defaultRenewLinkGname').value.trim(),
+                digitalPlat: document.getElementById('defaultRenewLinkDigitalPlat').value.trim(),
+            };
+            const renewWindowDays = {
+                nicUa: document.getElementById('renewWindowNicUa').value,
+                gname: document.getElementById('renewWindowGname').value,
+                digitalPlat: document.getElementById('renewWindowDigitalPlat').value,
+            };
             
             try {
                 const response = await fetch('/api/telegram/config', {
@@ -4323,7 +4515,9 @@ const getHTMLContent = (title) => `
                         enabled,
                         botToken,
                         chatId,
-                        notifyDays
+                        notifyDays,
+                        defaultRenewLinks,
+                        renewWindowDays
                     })
                 });
                 
@@ -4339,6 +4533,7 @@ const getHTMLContent = (title) => `
                 
                 telegramConfig = await response.json();
                 showAlert('success', '设置保存成功');
+                await renderDomainList();
                 
                 // 如果开启了默认展开，立即执行展开操作
                 if (telegramConfig.expandDomains) {
@@ -4383,6 +4578,79 @@ const getHTMLContent = (title) => `
         }
         
         // 渲染域名列表
+        // keep in sync: getEffectiveRenewLink / getRenewLinkProviderId / isRenewLinkAvailable (backend exports)
+        function getEffectiveRenewLinkFrontend(domain) {
+            if (!domain) return '';
+            const custom = domain.renewLink != null ? String(domain.renewLink).trim() : '';
+            if (custom) {
+                const safe = safeUrl(custom);
+                return safe || custom;
+            }
+            const links = telegramConfig.defaultRenewLinks || {};
+            const name = (domain.name || '').toLowerCase();
+            if (name.endsWith('.pp.ua')) return links.nicUa || '';
+            if (name.endsWith('.eu.cc')) return links.gname || '';
+            if (name.endsWith('.qzz.io') || name.endsWith('.dpdns.org') ||
+                name.endsWith('.us.kg') || name.endsWith('.xx.kg')) return links.digitalPlat || '';
+            return '';
+        }
+
+        function getRenewLinkAvailabilityFrontend(domain) {
+            const custom = domain?.renewLink != null ? String(domain.renewLink).trim() : '';
+            const daysLeft = domain.daysLeft;
+            if (custom) {
+                return { available: true, daysLeft, windowDays: 0 };
+            }
+            const name = (domain?.name || '').toLowerCase();
+            const windows = telegramConfig.renewWindowDays || {};
+            let providerId = null;
+            if (name.endsWith('.pp.ua')) providerId = 'nicUa';
+            else if (name.endsWith('.eu.cc')) providerId = 'gname';
+            else if (name.endsWith('.qzz.io') || name.endsWith('.dpdns.org') ||
+                     name.endsWith('.us.kg') || name.endsWith('.xx.kg')) providerId = 'digitalPlat';
+            if (!providerId) {
+                return { available: true, daysLeft, windowDays: 0 };
+            }
+            const windowDays = windows[providerId] ?? 0;
+            if (!windowDays || windowDays <= 0) {
+                return { available: true, daysLeft, windowDays: 0, providerId };
+            }
+            if (daysLeft === undefined || daysLeft === null) {
+                return { available: true, daysLeft, windowDays, providerId };
+            }
+            const available = daysLeft <= windowDays;
+            const daysUntilWindow = available ? 0 : daysLeft - windowDays;
+            return { available, daysLeft, windowDays, daysUntilWindow, providerId };
+        }
+
+        function updateRenewLinkHint() {
+            const name = (document.getElementById('domainName').value || '').toLowerCase();
+            const links = telegramConfig.defaultRenewLinks || {};
+            const windows = telegramConfig.renewWindowDays || {};
+            let defaultLink = '';
+            let providerId = null;
+            if (name.endsWith('.pp.ua')) { defaultLink = links.nicUa || ''; providerId = 'nicUa'; }
+            else if (name.endsWith('.eu.cc')) { defaultLink = links.gname || ''; providerId = 'gname'; }
+            else if (name.endsWith('.qzz.io') || name.endsWith('.dpdns.org') ||
+                     name.endsWith('.us.kg') || name.endsWith('.xx.kg')) { defaultLink = links.digitalPlat || ''; providerId = 'digitalPlat'; }
+            const hint = document.getElementById('renewLinkHint');
+            const field = document.getElementById('renewLink');
+            let hintText = '域名续费的直达链接；留空则按服务商使用系统设置中的默认链接';
+            if (defaultLink) {
+                hintText = '留空则使用默认: ' + defaultLink;
+                if (!field.value.trim()) field.placeholder = defaultLink;
+            } else if (!field.value.trim()) {
+                field.placeholder = '留空则使用系统设置中的默认链接';
+            }
+            if (providerId && !field.value.trim()) {
+                const windowDays = windows[providerId] ?? 0;
+                if (windowDays > 0) {
+                    hintText += '；需在到期前 ' + windowDays + ' 天内方可续费';
+                }
+            }
+            hint.textContent = hintText;
+        }
+
         async function renderDomainList() {
             // 更新总域名数量统计
             const totalDomainCountElement = document.getElementById('totalDomainCount');
@@ -4810,10 +5078,15 @@ const getHTMLContent = (title) => `
 
                     // 生成续期链接按钮：根据 safeUrl 结果决定渲染 <a> 还是 disabled <button>，
                     // 不安全协议（javascript:/data:/相对路径等）会被静默拒绝并显示"协议不安全"提示
-                    const safeRenewLink = safeUrl(domain.renewLink);
-                    const renewBtnTitle = !domain.renewLink
+                    const effectiveRenewLink = getEffectiveRenewLinkFrontend(domain);
+                    const renewAvailability = getRenewLinkAvailabilityFrontend(domain);
+                    const linkActive = renewAvailability.available;
+                    const safeRenewLink = linkActive ? safeUrl(effectiveRenewLink) : '';
+                    let renewBtnTitle = !effectiveRenewLink
                         ? '未设置续期链接'
-                        : (safeRenewLink ? '前往续期页面' : '续期链接协议不安全（仅支持 http(s) / mailto）');
+                        : (!linkActive
+                            ? ('距到期还有 ' + renewAvailability.daysLeft + ' 天，需进入到期前 ' + renewAvailability.windowDays + ' 天内方可续费（还需 ' + renewAvailability.daysUntilWindow + ' 天）')
+                            : (safeRenewLink ? '前往续期页面' : '续期链接协议不安全（仅支持 http(s) / mailto）'));
                     const renewLinkHtml = safeRenewLink
                         ? '<a href="' + escapeHtml(safeRenewLink) + '" target="_blank" rel="noopener noreferrer" class="btn btn-sm btn-warning" title="' + escapeHtml(renewBtnTitle) + '"><i class="iconfont icon-link"></i> 链接</a>'
                         : '<button class="btn btn-sm btn-secondary" disabled title="' + escapeHtml(renewBtnTitle) + '"><i class="iconfont icon-link"></i> 链接</button>';
@@ -5195,6 +5468,7 @@ const getHTMLContent = (title) => `
                         document.getElementById('noteColor').value = 'tag-blue'; // 默认蓝色
                     }
                     document.getElementById('renewLink').value = domain.renewLink !== undefined ? domain.renewLink : '';
+                    updateRenewLinkHint();
                     
                     // 设置续期周期
                     if (domain.renewCycle) {
@@ -5862,22 +6136,10 @@ const getHTMLContent = (title) => `
                         missingFields.push('注册商');
                     }
                     
-                    // 自动填充续费链接
+                    // 续费链接：留空则使用系统设置中的服务商默认链接（见 updateRenewLinkHint）
                     const renewLinkField = document.getElementById('renewLink');
-                    if (!renewLinkField.value) {
-                        if (domainName.endsWith('.pp.ua')) {
-                            renewLinkField.value = 'https://nic.ua/en/my/domains';
-                            renewLinkField.classList.add('auto-filled');
-                            filledFields.push('续费链接');
-                        } else if (domainName.endsWith('.eu.cc')) {
-                            renewLinkField.value = 'https://www.gname.com/user';
-                            renewLinkField.classList.add('auto-filled');
-                            filledFields.push('续费链接');
-                        } else if (domainName.endsWith('.qzz.io') || domainName.endsWith('.dpdns.org') || domainName.endsWith('.us.kg') || domainName.endsWith('.xx.kg')) {
-                            renewLinkField.value = 'https://dash.domain.digitalplat.org/panel/main?page=%2Fpanel%2Fdomains';
-                            renewLinkField.classList.add('auto-filled');
-                            filledFields.push('续费链接');
-                        }
+                    if (!renewLinkField.value.trim()) {
+                        updateRenewLinkHint();
                     }
                     
                     // 填充注册日期
@@ -6821,6 +7083,8 @@ async function getTelegramConfig() {
     expandDomains: !!config.expandDomains, // 返回域名展开配置
     progressStyle: config.progressStyle || 'bar', // 返回进度样式配置
     cardLayout: config.cardLayout || '4', // 返回卡片布局配置
+    defaultRenewLinks: resolveDefaultRenewLinks(config.defaultRenewLinks),
+    renewWindowDays: resolveRenewWindowDays(config.renewWindowDays),
   };
 }
 
@@ -6854,6 +7118,8 @@ async function saveTelegramConfig(configData) {
     expandDomains: !!configData.expandDomains, // 保存域名展开配置
     progressStyle: configData.progressStyle || 'bar', // 保存进度样式配置
     cardLayout: configData.cardLayout || '4', // 保存卡片布局配置
+    defaultRenewLinks: sanitizeDefaultRenewLinks(configData.defaultRenewLinks),
+    renewWindowDays: sanitizeRenewWindowDays(configData.renewWindowDays),
   };
   
   await DOMAIN_MONITOR.put('telegram_config', JSON.stringify(config));
@@ -6897,6 +7163,8 @@ async function saveTelegramConfig(configData) {
     expandDomains: config.expandDomains, // 返回域名展开配置
     progressStyle: config.progressStyle, // 返回进度样式配置
     cardLayout: config.cardLayout, // 返回卡片布局配置
+    defaultRenewLinks: resolveDefaultRenewLinks(config.defaultRenewLinks),
+    renewWindowDays: resolveRenewWindowDays(config.renewWindowDays),
   };
 }
 
@@ -6937,7 +7205,8 @@ async function testTelegramNotification() {
   message += '🏬 <b>注册厂商:</b> NIC.UA\n';
   message += '⏳ <b>剩余时间:</b> 90 天\n';
   message += '📅 <b>到期日期:</b> ' + formattedDate + '\n';
-  message += '⚠️ <b>点击续期:</b> https://nic.ua/en/my/domains\n';
+  const testRenewLink = getEffectiveRenewLink({ name: 'xx.pp.ua', renewLink: '' }, config.defaultRenewLinks);
+  message += '⚠️ <b>点击续期:</b> ' + escapeHtmlBackend(testRenewLink || '未设置续期链接') + '\n';
   
   const result = await sendTelegramMessage(config, message);
   return { success: true, message: '测试通知已发送' };
@@ -6989,6 +7258,8 @@ async function getTelegramConfigWithToken() {
     botToken: config.botToken || '',
     chatId: config.chatId || '',
     notifyDays: config.notifyDays || 30,
+    defaultRenewLinks: resolveDefaultRenewLinks(config.defaultRenewLinks),
+    renewWindowDays: resolveRenewWindowDays(config.renewWindowDays),
   };
 }
 
@@ -7349,11 +7620,7 @@ async function sendExpiringDomainsNotification(config, domains, isExpired) {
     message += '⏳ <b>剩余时间:</b> ' + daysLeft + ' 天\n';
     message += '📅 <b>到期日期:</b> ' + formatDate(domain.expiryDate) + '\n';
 
-    if (domain.renewLink) {
-      message += '⚠️ <b>点击续期:</b> ' + escapeHtmlBackend(domain.renewLink) + '\n';
-    } else {
-      message += '⚠️ <b>点击续期:</b> 未设置续期链接\n';
-    }
+    message += formatRenewLinkNotificationLine(domain, config, true);
   });
   
   // 发送消息
@@ -7392,11 +7659,7 @@ async function sendCombinedDomainsNotification(config, expiringDomains, expiredD
       message += '⏳ 剩余时间: ' + daysLeft + ' 天\n';
       message += '📅 到期日期: ' + formatDate(domain.expiryDate) + '\n';
 
-      if (domain.renewLink) {
-        message += '⚠️ 点击续期: ' + escapeHtmlBackend(domain.renewLink) + '\n';
-      } else {
-        message += '⚠️ 点击续期: 未设置续期链接\n';
-      }
+      message += formatRenewLinkNotificationLine(domain, config, false);
     });
   }
 
@@ -7431,11 +7694,7 @@ async function sendCombinedDomainsNotification(config, expiringDomains, expiredD
       message += '⏳ 剩余时间: ' + daysLeft + ' 天\n';
       message += '📅 到期日期: ' + formatDate(domain.expiryDate) + '\n';
 
-      if (domain.renewLink) {
-        message += '⚠️ 点击续期: ' + escapeHtmlBackend(domain.renewLink) + '\n';
-      } else {
-        message += '⚠️ 点击续期: 未设置续期链接\n';
-      }
+      message += formatRenewLinkNotificationLine(domain, config, false);
     });
   }
   
