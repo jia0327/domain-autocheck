@@ -2,6 +2,16 @@
 
 <details>
     <summary>更新日志</summary>
+
+    2026-06-28  
+    1. 新增 DNSHE 托管子域名 WHOIS 查询（de5.net / ccwu.cc / bbroot.com 等，需配置 API Key）  
+    2. 系统设置支持 DNSHE 默认续费链接与 180 天续费开放窗口  
+
+    2026-06（此前）  
+    1. 接入 Stackryze 托管子域名（indevs.in / sryze.cc / ryzedns.org / nx.kg）  
+    2. 系统设置新增按服务商配置默认续费链接与续费开放窗口  
+    3. WHOIS 查询后按注册厂商自动创建并选中分类  
+
     2025-12-14  
     1. 系统设置新增默认展开卡片、进度条、卡片布局设置  
     2. 新增亮色和暗色主题切换  
@@ -9,7 +19,7 @@
     4. 列表新增分类下拉框过滤，添加域名增加注册账号属性  
 </details>
 
-> 现在除了一级域名配合 apikey 查询之外，新增 `pp.ua`、`qzz.io`、`dpdns.org`、`xx.kg`、`us.kg`、`eu.cc` 这 6 个二级域名时，点击查询后如果不需要填写注册账号和备注，其他信息都会自动填写，可以直接保存。
+> 除了一级域名（免费 RDAP）外，还支持多种二级/托管子域名：点击 WHOIS 查询后，注册商、注册日期、到期日期、续费链接等会自动填充（DNSHE 需在 Worker 环境变量中配置 `DNSHE_API_KEY` / `DNSHE_API_SECRET`）。
 
 ## ✨一句话介绍
 部署在 Cloudflare Workers 的轻量级域名到期监控系统，支持 Telegram 通知与自动 WHOIS 填充。
@@ -19,19 +29,21 @@
 * Cloudflare KV 持久化存储
 * 支持 Telegram 到期提醒
 * 支持一级域名 WHOIS 自动查询（基于免费 RDAP，无需 API Key）
-* 支持指定二级域名自动查询：`pp.ua`、`us.kg`、`xx.kg`、`qzz.io`、`dpdns.org`、`eu.cc`
+* 支持多种二级/托管子域名自动查询（见下表）
+* 按注册商自动分类、可配置各服务商默认续费链接与续费开放窗口
 
-## ✅二级域名自动查询
-支持以下二级域名自动识别注册商、注册日期、到期日期、续期链接，并默认续期周期 1 年：
+## ✅二级域名 / 托管子域名自动查询
+支持以下后缀自动识别注册商、注册日期、到期日期、续期链接，并默认续期周期 1 年：
 
-| 二级域名 | 注册网址 |
-|:---------|:---------|
-| `pp.ua` | https://nic.ua |
-| `us.kg` | https://domain.digitalplat.org |
-| `xx.kg` | https://domain.digitalplat.org |
-| `qzz.io` | https://domain.digitalplat.org |
-| `dpdns.org` | https://domain.digitalplat.org |
-| `eu.cc` | https://www.gname.com |
+| 后缀 / 服务商 | 注册网址 | 备注 |
+|:---------|:---------|:-----|
+| `pp.ua` | https://nic.ua | 无需额外配置 |
+| `us.kg` / `xx.kg` / `qzz.io` / `dpdns.org` | https://domain.digitalplat.org | DigitalPlat |
+| `eu.cc` | https://www.gname.com | 免费续费窗口默认 90 天 |
+| `indevs.in` / `sryze.cc` / `ryzedns.org` / `nx.kg` | https://domain.stackryze.com | Stackryze，无需 API Key |
+| `de5.net` / `us.ci` / `cc.cd` / `bot.cd` / `ccwu.cc` / `bbroot.com` / `bbroott.com` / `cn.mt` / `onlydev.cc` | https://my.dnshe.com | DNSHE，需配置 API Key（见环境变量） |
+
+> DNSHE 的 WHOIS 接口与控制台 Domain Hub 相同，使用 **Access Token**（`X-API-Key` + `X-API-Secret`），**不要**把浏览器登录 Cookie 填进 Worker。
 
 ## 📌项目说明
 本项目主要是和 AI 沟通创作而成，小伙伴可自行进行完善或魔改。
@@ -119,6 +131,9 @@ Fork 部署可以保持与上游仓库的关联，方便后续通过 **Sync fork
 | 名称              | 示例                                                                           | 必填 | 备注                                     |
 |:------------------|:-------------------------------------------------------------------------------|:----:|:-----------------------------------------|
 | TOKEN             | 默认是 `domain`                                                                |  ✅️  | 登录密码，建议自定义，不填则默认 `domain` |
+| DOMAIN_MONITOR    | （KV 绑定）                                                                    |  ✅️  | Workers 绑定 KV 命名空间，变量名固定     |
+| DNSHE_API_KEY     | 在 [DNSHE Domain Hub](https://my.dnshe.com/index.php?m=domain_hub) 生成       |  ❌️  | 查询 DNSHE 托管子域名时必填              |
+| DNSHE_API_SECRET  | 同上                                                                           |  ❌️  | 与 `DNSHE_API_KEY` 成对使用              |
 | TG_TOKEN          | Telegram 找 [@BotFather](https://t.me/BotFather) 获取                           |  ❌️  | 可在界面后端配置                         |
 | TG_ID             | Telegram 找 [@userinfobot](https://t.me/userinfobot) 获取，或群机器人也可       |  ❌️  | 可在界面后端配置                         |
 | SITE_NAME         | 默认为域名到期监控                                                             |  ❌️  | 不填则默认“域名到期监控”                 |
