@@ -10,7 +10,12 @@ import { connect } from 'cloudflare:sockets';
 // 环境变量声明（运行时由 injectEnv 注入）
 let DOMAIN_MONITOR, TOKEN, SITE_NAME, LOGO_URL,
     BACKGROUND_URL, MOBILE_BACKGROUND_URL,
-    TG_TOKEN, TG_ID, DNSHE_API_KEY, DNSHE_API_SECRET;
+    TG_TOKEN, TG_ID, DNSHE_API_KEY, DNSHE_API_SECRET,
+    BARK_PUSH, PUSH_KEY, PUSH_PLUS_TOKEN, DEER_KEY, DD_BOT_TOKEN, DD_BOT_SECRET,
+    QYWX_KEY, QYWX_AM, FSKEY, FSSECRET, GOTIFY_TOKEN, IGOT_PUSH_KEY, PUSHME_KEY,
+    WEBHOOK_URL, NTFY_TOPIC, NTFY_TOKEN, WXPUSHER_APP_TOKEN, QMSG_KEY,
+    WE_PLUS_BOT_TOKEN, AIBOTK_KEY, CHAT_TOKEN, CHAT_URL, GOBOT_URL, GOBOT_TOKEN,
+    CHRONOCAT_TOKEN, CHRONOCAT_URL;
 
 // 将环境变量注入模块作用域，使已有的 typeof VAR !== 'undefined' 检查继续工作
 function injectEnv(env) {
@@ -24,6 +29,32 @@ function injectEnv(env) {
 	if (env.TG_ID !== undefined) TG_ID = env.TG_ID;
 	if (env.DNSHE_API_KEY !== undefined) DNSHE_API_KEY = env.DNSHE_API_KEY;
 	if (env.DNSHE_API_SECRET !== undefined) DNSHE_API_SECRET = env.DNSHE_API_SECRET;
+	if (env.BARK_PUSH !== undefined) BARK_PUSH = env.BARK_PUSH;
+	if (env.PUSH_KEY !== undefined) PUSH_KEY = env.PUSH_KEY;
+	if (env.PUSH_PLUS_TOKEN !== undefined) PUSH_PLUS_TOKEN = env.PUSH_PLUS_TOKEN;
+	if (env.DEER_KEY !== undefined) DEER_KEY = env.DEER_KEY;
+	if (env.DD_BOT_TOKEN !== undefined) DD_BOT_TOKEN = env.DD_BOT_TOKEN;
+	if (env.DD_BOT_SECRET !== undefined) DD_BOT_SECRET = env.DD_BOT_SECRET;
+	if (env.QYWX_KEY !== undefined) QYWX_KEY = env.QYWX_KEY;
+	if (env.QYWX_AM !== undefined) QYWX_AM = env.QYWX_AM;
+	if (env.FSKEY !== undefined) FSKEY = env.FSKEY;
+	if (env.FSSECRET !== undefined) FSSECRET = env.FSSECRET;
+	if (env.GOTIFY_TOKEN !== undefined) GOTIFY_TOKEN = env.GOTIFY_TOKEN;
+	if (env.IGOT_PUSH_KEY !== undefined) IGOT_PUSH_KEY = env.IGOT_PUSH_KEY;
+	if (env.PUSHME_KEY !== undefined) PUSHME_KEY = env.PUSHME_KEY;
+	if (env.WEBHOOK_URL !== undefined) WEBHOOK_URL = env.WEBHOOK_URL;
+	if (env.NTFY_TOPIC !== undefined) NTFY_TOPIC = env.NTFY_TOPIC;
+	if (env.NTFY_TOKEN !== undefined) NTFY_TOKEN = env.NTFY_TOKEN;
+	if (env.WXPUSHER_APP_TOKEN !== undefined) WXPUSHER_APP_TOKEN = env.WXPUSHER_APP_TOKEN;
+	if (env.QMSG_KEY !== undefined) QMSG_KEY = env.QMSG_KEY;
+	if (env.WE_PLUS_BOT_TOKEN !== undefined) WE_PLUS_BOT_TOKEN = env.WE_PLUS_BOT_TOKEN;
+	if (env.AIBOTK_KEY !== undefined) AIBOTK_KEY = env.AIBOTK_KEY;
+	if (env.CHAT_TOKEN !== undefined) CHAT_TOKEN = env.CHAT_TOKEN;
+	if (env.CHAT_URL !== undefined) CHAT_URL = env.CHAT_URL;
+	if (env.GOBOT_URL !== undefined) GOBOT_URL = env.GOBOT_URL;
+	if (env.GOBOT_TOKEN !== undefined) GOBOT_TOKEN = env.GOBOT_TOKEN;
+	if (env.CHRONOCAT_TOKEN !== undefined) CHRONOCAT_TOKEN = env.CHRONOCAT_TOKEN;
+	if (env.CHRONOCAT_URL !== undefined) CHRONOCAT_URL = env.CHRONOCAT_URL;
 }
 
 // ================================
@@ -201,6 +232,19 @@ export function isCloudflareDelegatable(domainName) {
 export function sanitizeNameservers(nameservers) {
   const normalized = normalizeNameservers(nameservers);
   return normalized.length ? normalized : undefined;
+}
+
+export function applyNameserversUpdate(domain, nameservers) {
+  const ns = sanitizeNameservers(nameservers);
+  const prev = JSON.stringify(normalizeNameservers(domain?.nameservers || []));
+  const next = JSON.stringify(ns || []);
+  if (prev === next) {
+    return { changed: false, domain, nameservers: ns || [] };
+  }
+  const updated = { ...domain };
+  if (ns) updated.nameservers = ns;
+  else delete updated.nameservers;
+  return { changed: true, domain: updated, nameservers: ns || [] };
 }
 
 export function isStackryzeDomain(domainName) {
@@ -451,6 +495,16 @@ export async function hmacSha256Hex(secret, message) {
     hex += bytes[i].toString(16).padStart(2, '0');
   }
   return hex;
+}
+
+export async function hmacSha256Base64(secret, message) {
+  const key = await getHmacKey(secret);
+  const sig = await crypto.subtle.sign(
+    'HMAC',
+    key,
+    new TextEncoder().encode(message)
+  );
+  return btoa(String.fromCharCode(...new Uint8Array(sig)));
 }
 
 // 用 token 作为密钥签发 session cookie 值
@@ -2149,6 +2203,7 @@ const getHTMLContent = (title) => `
     <style>
         :root {
             /* Light Theme (Default) */
+            color-scheme: light;
             --primary-color: #6366f1;
             --secondary-color: #64748b;
             --success-color: #10b981;
@@ -2178,6 +2233,7 @@ const getHTMLContent = (title) => `
 
         [data-theme="dark"] {
             /* Dark Theme */
+            color-scheme: dark;
             --primary-color: #4e54c8;
             --secondary-color: #6c757d;
             --success-color: rgb(0, 255, 60);
@@ -3521,6 +3577,14 @@ const getHTMLContent = (title) => `
             box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3) !important;
         }
 
+        [data-theme="dark"] .dropdown-divider {
+            border-top-color: rgba(255, 255, 255, 0.15) !important;
+        }
+
+        [data-theme="dark"] .btn-close {
+            filter: invert(1) grayscale(100%) brightness(200%);
+        }
+
         .dropdown-item {
             font-size: 0.85rem;
             padding: 0.6rem 1rem;
@@ -3625,6 +3689,28 @@ const getHTMLContent = (title) => `
             background-color: var(--input-bg);
             color: var(--text-main);
             padding: 8px;
+        }
+
+        /* 暗黑模式：所有原生 select / date 控件统一暗色下拉（含列表页分类筛选、编辑弹窗分类等） */
+        [data-theme="dark"] select,
+        [data-theme="dark"] .form-select {
+            color-scheme: dark;
+            background-color: rgba(30, 30, 40, 0.92) !important;
+            color: rgba(255, 255, 255, 0.9) !important;
+            border-color: var(--input-border) !important;
+            background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3e%3cpath fill='none' stroke='%23cccccc' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='m2 5 6 6 6-6'/%3e%3c/svg%3e") !important;
+        }
+
+        [data-theme="dark"] select option,
+        [data-theme="dark"] .form-select option {
+            background-color: #2a2a3a !important;
+            color: rgba(255, 255, 255, 0.9) !important;
+        }
+
+        [data-theme="dark"] .form-control[type="date"],
+        [data-theme="dark"] .form-control[type="datetime-local"],
+        [data-theme="dark"] .form-control[type="time"] {
+            color-scheme: dark;
         }
         
         .alert {
@@ -3794,6 +3880,9 @@ const getHTMLContent = (title) => `
                           <option value="all">所有分类</option>
                       </select>
                 </div>
+                <button class="btn btn-outline-warning btn-sm ms-2" id="syncNsBatchBtn" type="button" title="批量查询 WHOIS 检测 DNS 服务器与 Cloudflare 托管状态">
+                    <i class="iconfont icon-earth-full"></i> 批量检测 NS
+                </button>
             </div>
             <div class="btn-action-group">
                   <div class="btn-group me-2">
@@ -4175,10 +4264,10 @@ const getHTMLContent = (title) => `
                         
                         <hr style="border-color: rgba(255, 255, 255, 0.1);">
                         
-                        <h6 class="mb-3" style="display: flex; align-items: center; gap: 5px;"><i class="iconfont icon-telegram" style="color: white;"></i> Telegram通知设置</h6>
+                        <h6 class="mb-3" style="display: flex; align-items: center; gap: 5px;"><i class="iconfont icon-telegram" style="color: white;"></i> 通知设置</h6>
                         <div class="mb-3 form-check">
                             <input type="checkbox" class="form-check-input" id="telegramEnabled">
-                            <label class="form-check-label" for="telegramEnabled">启用Telegram通知</label>
+                            <label class="form-check-label" for="telegramEnabled">启用 Telegram 通知</label>
                         </div>
                         <div id="telegramSettings" style="display: none;">
                             <div class="mb-3">
@@ -4191,15 +4280,19 @@ const getHTMLContent = (title) => `
                                 <input type="text" class="form-control" id="telegramChatId" placeholder="如已在环境变量中配置则可留空">
                                 <div class="form-text">可以使用@userinfobot获取个人ID，或将机器人添加到群组后获取群组ID</div>
                             </div>
-                            <div class="mb-3">
-                                <label for="notifyDays" class="form-label"><i class="iconfont icon-lingdang"></i> 提前通知天数</label>
-                                <input type="number" class="form-control" id="notifyDays" min="1" max="90" value="30">
-                                <div class="form-text">域名到期前多少天开始发送通知</div>
-                            </div>
-                            <div class="mb-3">
-                                <button type="button" class="btn btn-info" id="testTelegramBtn"><i class="iconfont icon-paper-plane" style="color: white;"></i> <span style="color: white;">测试Telegram通知</span></button>
-                                <span id="testResult" class="ms-2"></span>
-                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <label for="notifyDays" class="form-label"><i class="iconfont icon-lingdang"></i> 提前通知天数</label>
+                            <input type="number" class="form-control" id="notifyDays" min="1" max="90" value="30">
+                            <div class="form-text">域名到期前多少天开始发送通知（对所有已启用渠道生效）</div>
+                        </div>
+                        <hr style="border-color: rgba(255, 255, 255, 0.1);">
+                        <h6 class="mb-2"><i class="iconfont icon-paper-plane"></i> 多通道推送</h6>
+                        <p class="form-text mb-3">可同时启用多个渠道；密钥也可通过 Worker 环境变量配置（变量名与青龙脚本相同，如 BARK_PUSH、PUSH_KEY 等）</p>
+                        <div id="pushChannelsPanel" class="small"></div>
+                        <div class="mb-3 mt-3">
+                            <button type="button" class="btn btn-info" id="testTelegramBtn"><i class="iconfont icon-paper-plane" style="color: white;"></i> <span style="color: white;">测试通知</span></button>
+                            <span id="testResult" class="ms-2"></span>
                         </div>
                     </form>
                 </div>
@@ -4230,6 +4323,38 @@ const getHTMLContent = (title) => `
         </div>
     </div>
     
+    <!-- 批量检测 NS 模态框 -->
+    <div class="modal fade" id="syncNsBatchModal" tabindex="-1" data-bs-backdrop="static">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">批量检测 NS</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close" id="syncNsBatchCloseBtn"></button>
+                </div>
+                <div class="modal-body">
+                    <div id="syncNsBatchIntro">
+                        <p class="mb-2">将向注册商查询 WHOIS，同步各域名的 DNS 服务器，用于检测 <strong>已托管 CF</strong> 状态。</p>
+                        <div class="alert alert-info py-2 mb-3">
+                            <small><i class="iconfont icon-info"></i> DNSHE 域名会先通过 API 批量同步；其余域名逐个 WHOIS 查询，请耐心等待。</small>
+                        </div>
+                        <p class="mb-0"><i class="iconfont icon-list-ul"></i> <strong>检测范围：</strong><span id="syncNsBatchScope">全部域名</span>（<span id="syncNsBatchCount">0</span> 个）</p>
+                    </div>
+                    <div id="syncNsBatchProgress" style="display: none;">
+                        <div class="progress mb-2" style="height: 8px;">
+                            <div class="progress-bar progress-bar-striped progress-bar-animated bg-warning" id="syncNsBatchProgressBar" role="progressbar" style="width: 0%;"></div>
+                        </div>
+                        <p class="mb-0 text-muted small" id="syncNsBatchProgressText">准备中...</p>
+                    </div>
+                    <div id="syncNsBatchResult" style="display: none;"></div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal" id="syncNsBatchCancelBtn"><i class="iconfont icon-xmark"></i> 取消</button>
+                    <button type="button" class="btn btn-warning" id="confirmSyncNsBatchBtn"><i class="iconfont icon-earth-full"></i> 开始检测</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- 刷新检测到期时间模态框 -->
     <div class="modal fade" id="syncExpiryModal" tabindex="-1">
         <div class="modal-dialog">
@@ -4485,7 +4610,7 @@ const getHTMLContent = (title) => `
             });
             
             // 添加模态框焦点管理 - 让Bootstrap自己处理aria-hidden
-            const modals = ['addDomainModal', 'dnsheImportModal', 'categoryManageModal', 'settingsModal', 'deleteDomainModal', 'syncExpiryModal', 'deleteCategoryModal'];
+            const modals = ['addDomainModal', 'dnsheImportModal', 'categoryManageModal', 'settingsModal', 'deleteDomainModal', 'syncExpiryModal', 'syncNsBatchModal', 'deleteCategoryModal'];
             modals.forEach(modalId => {
                 const modalElement = document.getElementById(modalId);
                 if (modalElement) {
@@ -5153,6 +5278,73 @@ const getHTMLContent = (title) => `
             '</div>';
         }
         
+        // 多通道推送配置 UI（keep in sync: sanitizePushChannels / resolvePushChannels）
+        const PUSH_CHANNEL_DEFS = [
+            { id: 'bark', name: 'Bark', fields: [{ key: 'push', label: 'Key/URL', placeholder: 'BARK_PUSH' }] },
+            { id: 'serverChan', name: 'Server酱', fields: [{ key: 'key', label: 'SendKey', placeholder: 'PUSH_KEY' }] },
+            { id: 'pushPlus', name: 'PushPlus', fields: [{ key: 'token', label: 'Token', placeholder: 'PUSH_PLUS_TOKEN' }] },
+            { id: 'dingtalk', name: '钉钉机器人', fields: [{ key: 'token', label: 'Token', placeholder: 'DD_BOT_TOKEN' }, { key: 'secret', label: 'Secret', placeholder: 'DD_BOT_SECRET' }] },
+            { id: 'qywxBot', name: '企业微信机器人', fields: [{ key: 'key', label: 'Webhook Key', placeholder: 'QYWX_KEY' }] },
+            { id: 'feishu', name: '飞书机器人', fields: [{ key: 'key', label: 'Hook Key', placeholder: 'FSKEY' }, { key: 'secret', label: 'Secret', placeholder: 'FSSECRET' }] },
+            { id: 'pushDeer', name: 'PushDeer', fields: [{ key: 'key', label: 'PushKey', placeholder: 'DEER_KEY' }] },
+            { id: 'ntfy', name: 'ntfy', fields: [{ key: 'topic', label: 'Topic', placeholder: 'NTFY_TOPIC' }, { key: 'url', label: 'URL', placeholder: 'https://ntfy.sh' }] },
+            { id: 'wxPusher', name: 'WxPusher', fields: [{ key: 'appToken', label: 'AppToken', placeholder: 'WXPUSHER_APP_TOKEN' }, { key: 'topicIds', label: 'TopicIds', placeholder: '分号分隔' }, { key: 'uids', label: 'UIDs', placeholder: '分号分隔' }] },
+            { id: 'webhook', name: '自定义 Webhook', fields: [{ key: 'url', label: 'URL ($title/$content)', placeholder: 'WEBHOOK_URL' }, { key: 'method', label: 'Method', placeholder: 'POST' }, { key: 'body', label: 'Body', placeholder: '{"title":"$title","content":"$content"}' }] },
+            { id: 'gotify', name: 'Gotify', fields: [{ key: 'url', label: 'URL', placeholder: 'GOTIFY_URL' }, { key: 'token', label: 'Token', placeholder: 'GOTIFY_TOKEN' }] },
+            { id: 'pushMe', name: 'PushMe', fields: [{ key: 'key', label: 'PushKey', placeholder: 'PUSHME_KEY' }] },
+            { id: 'igot', name: 'iGot', fields: [{ key: 'key', label: 'Key', placeholder: 'IGOT_PUSH_KEY' }] },
+            { id: 'qmsg', name: 'Qmsg酱', fields: [{ key: 'key', label: 'Key', placeholder: 'QMSG_KEY' }, { key: 'type', label: 'Type', placeholder: 'send' }] },
+            { id: 'wePlusBot', name: '微加机器人', fields: [{ key: 'token', label: 'Token', placeholder: 'WE_PLUS_BOT_TOKEN' }, { key: 'receiver', label: 'Receiver', placeholder: '接收人' }] },
+            { id: 'aibotk', name: '智能微秘书', fields: [{ key: 'key', label: 'ApiKey', placeholder: 'AIBOTK_KEY' }, { key: 'type', label: 'Type', placeholder: 'contact/room' }, { key: 'name', label: 'Name', placeholder: '好友或群名' }] },
+            { id: 'synologyChat', name: 'Synology Chat', fields: [{ key: 'url', label: 'URL', placeholder: 'CHAT_URL' }, { key: 'token', label: 'Token', placeholder: 'CHAT_TOKEN' }] },
+            { id: 'gobot', name: 'Go-cqhttp', fields: [{ key: 'url', label: 'URL', placeholder: 'GOBOT_URL' }, { key: 'token', label: 'Token', placeholder: 'GOBOT_TOKEN' }, { key: 'qq', label: 'QQ', placeholder: 'user_id= / group_id=' }] },
+            { id: 'chronocat', name: 'Chronocat', fields: [{ key: 'url', label: 'URL', placeholder: 'CHRONOCAT_URL' }, { key: 'token', label: 'Token', placeholder: 'CHRONOCAT_TOKEN' }, { key: 'qq', label: 'QQ', placeholder: 'user_id= / group_id=' }] },
+            { id: 'qywxAm', name: '企业微信应用', fields: [{ key: 'am', label: 'QYWX_AM', placeholder: 'corpid,corpsecret,touser,agentid' }] },
+        ];
+
+        function renderPushChannelsPanel() {
+            const panel = document.getElementById('pushChannelsPanel');
+            if (!panel) return;
+            panel.innerHTML = PUSH_CHANNEL_DEFS.map(function(def) {
+                const fieldsHtml = def.fields.map(function(field) {
+                    return '<input type="text" class="form-control form-control-sm mb-1 push-field" data-channel="' + escapeHtml(def.id) + '" data-field="' + escapeHtml(field.key) + '" placeholder="' + escapeHtml(field.placeholder || field.label) + '">';
+                }).join('');
+                return '<div class="border rounded p-2 mb-2" style="border-color: rgba(255,255,255,0.12) !important;">' +
+                    '<div class="form-check form-switch mb-1">' +
+                    '<input class="form-check-input push-enabled" type="checkbox" id="pushEnabled_' + escapeHtml(def.id) + '" data-channel="' + escapeHtml(def.id) + '">' +
+                    '<label class="form-check-label" for="pushEnabled_' + escapeHtml(def.id) + '">' + escapeHtml(def.name) + '</label></div>' +
+                    fieldsHtml + '</div>';
+            }).join('');
+        }
+
+        function loadPushChannelsFromConfig(channels) {
+            channels = channels || {};
+            document.querySelectorAll('.push-enabled').forEach(function(el) {
+                const id = el.dataset.channel;
+                el.checked = !!(channels[id] && channels[id].enabled);
+            });
+            document.querySelectorAll('.push-field').forEach(function(el) {
+                const ch = channels[el.dataset.channel] || {};
+                el.value = ch[el.dataset.field] != null ? ch[el.dataset.field] : '';
+            });
+        }
+
+        function collectPushChannels() {
+            const out = {};
+            document.querySelectorAll('.push-enabled').forEach(function(el) {
+                out[el.dataset.channel] = { enabled: el.checked };
+            });
+            document.querySelectorAll('.push-field').forEach(function(el) {
+                const id = el.dataset.channel;
+                const field = el.dataset.field;
+                if (!out[id]) out[id] = { enabled: false };
+                if (el.value.trim()) out[id][field] = el.value.trim();
+            });
+            return out;
+        }
+
+        renderPushChannelsPanel();
+
         // 加载Telegram配置
         async function loadTelegramConfig() {
             try {
@@ -5261,6 +5453,7 @@ const getHTMLContent = (title) => `
                 document.getElementById('renewWindowDigitalPlat').value = renewWindows.digitalPlat ?? 0;
                 document.getElementById('renewWindowStackryze').value = renewWindows.stackryze ?? 60;
                 document.getElementById('renewWindowDnshe').value = renewWindows.dnshe ?? 180;
+                loadPushChannelsFromConfig(telegramConfig.pushChannels || {});
             } catch (error) {
                 // 忽略Telegram配置加载失败
             }
@@ -5304,7 +5497,8 @@ const getHTMLContent = (title) => `
                         chatId,
                         notifyDays,
                         defaultRenewLinks,
-                        renewWindowDays
+                        renewWindowDays,
+                        pushChannels: collectPushChannels(),
                     })
                 });
                 
@@ -5356,7 +5550,7 @@ const getHTMLContent = (title) => `
                 }
                 
                 const result = await response.json();
-                testResult.textContent = '测试成功！请检查Telegram是否收到消息';
+                testResult.textContent = result.message || '测试成功！请检查各渠道是否收到消息';
                 testResult.className = 'ms-2 telegram-test-success';
             } catch (error) {
                 testResult.textContent = '测试失败: ' + error.message;
@@ -6484,6 +6678,139 @@ const getHTMLContent = (title) => `
                     }
                 }
                 
+                // 批量检测 NS
+                function getDomainsForNsSync() {
+                    if (!Array.isArray(domains)) return [];
+                    if (currentCategoryFilter && currentCategoryFilter !== 'all') {
+                        return domains.filter(function(d) { return d.categoryId === currentCategoryFilter; });
+                    }
+                    return domains.slice();
+                }
+
+                function showSyncNsBatchModal() {
+                    const list = getDomainsForNsSync();
+                    const scopeEl = document.getElementById('syncNsBatchScope');
+                    const countEl = document.getElementById('syncNsBatchCount');
+                    if (currentCategoryFilter && currentCategoryFilter !== 'all') {
+                        const cat = categories.find(function(c) { return c.id === currentCategoryFilter; });
+                        scopeEl.textContent = cat ? ('分类「' + cat.name + '」') : '当前分类';
+                    } else {
+                        scopeEl.textContent = '全部域名';
+                    }
+                    countEl.textContent = String(list.length);
+                    document.getElementById('syncNsBatchIntro').style.display = '';
+                    document.getElementById('syncNsBatchProgress').style.display = 'none';
+                    document.getElementById('syncNsBatchResult').style.display = 'none';
+                    document.getElementById('confirmSyncNsBatchBtn').style.display = '';
+                    document.getElementById('confirmSyncNsBatchBtn').disabled = list.length === 0;
+                    document.getElementById('syncNsBatchCancelBtn').disabled = false;
+                    document.getElementById('syncNsBatchCloseBtn').disabled = false;
+                    const modal = new bootstrap.Modal(document.getElementById('syncNsBatchModal'));
+                    modal.show();
+                }
+
+                async function runSyncNsBatch() {
+                    const list = getDomainsForNsSync();
+                    if (!list.length) {
+                        showAlert('warning', '没有可检测的域名');
+                        return;
+                    }
+
+                    const confirmBtn = document.getElementById('confirmSyncNsBatchBtn');
+                    const cancelBtn = document.getElementById('syncNsBatchCancelBtn');
+                    const closeBtn = document.getElementById('syncNsBatchCloseBtn');
+                    const intro = document.getElementById('syncNsBatchIntro');
+                    const progress = document.getElementById('syncNsBatchProgress');
+                    const progressBar = document.getElementById('syncNsBatchProgressBar');
+                    const progressText = document.getElementById('syncNsBatchProgressText');
+                    const resultEl = document.getElementById('syncNsBatchResult');
+
+                    confirmBtn.disabled = true;
+                    cancelBtn.disabled = true;
+                    closeBtn.disabled = true;
+                    intro.style.display = 'none';
+                    resultEl.style.display = 'none';
+                    progress.style.display = '';
+
+                    let updated = 0;
+                    let cfCount = 0;
+                    let failed = 0;
+                    const totalSteps = list.length + 1;
+
+                    try {
+                        progressText.textContent = '正在同步 DNSHE 域名元数据...';
+                        progressBar.style.width = Math.round(100 / totalSteps) + '%';
+                        await fetch('/api/domains/sync-nameservers', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ dnsheOnly: true }),
+                        });
+                        await loadDomains();
+
+                        for (let i = 0; i < list.length; i++) {
+                            const item = list[i];
+                            const current = domains.find(function(d) { return d.id === item.id; }) || item;
+                            const pct = Math.round(((i + 2) / totalSteps) * 100);
+                            progressBar.style.width = pct + '%';
+                            progressText.textContent = '正在检测 (' + (i + 1) + '/' + list.length + '): ' + current.name;
+
+                            try {
+                                const response = await fetch('/api/domains/' + encodeURIComponent(current.id) + '/sync-nameservers', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({}),
+                                });
+                                const result = await response.json();
+                                if (!response.ok) {
+                                    failed++;
+                                    continue;
+                                }
+                                if (result.changed) updated++;
+                                if (result.cloudflareDelegated) cfCount++;
+                            } catch (err) {
+                                failed++;
+                            }
+                        }
+
+                        progressBar.style.width = '100%';
+                        progressBar.classList.remove('progress-bar-animated');
+                        progressText.textContent = '检测完成';
+
+                        await loadDomains();
+                        renderDomainList();
+
+                        resultEl.style.display = '';
+                        resultEl.innerHTML = '<div class="alert alert-success py-2 mb-0">' +
+                            '<div><strong>检测完成</strong></div>' +
+                            '<div class="small mt-1">共 ' + list.length + ' 个域名，更新 NS ' + updated + ' 个，已托管 CF ' + cfCount + ' 个' +
+                            (failed ? ('，失败 ' + failed + ' 个') : '') + '。</div></div>';
+
+                        confirmBtn.style.display = 'none';
+                        cancelBtn.disabled = false;
+                        cancelBtn.textContent = '关闭';
+                        closeBtn.disabled = false;
+
+                        showAlert('success', '批量 NS 检测完成：已托管 CF ' + cfCount + ' 个');
+                    } catch (error) {
+                        showAlert('danger', error.message || '批量检测失败');
+                        intro.style.display = '';
+                        progress.style.display = 'none';
+                        confirmBtn.disabled = false;
+                        cancelBtn.disabled = false;
+                        closeBtn.disabled = false;
+                    }
+                }
+
+                document.getElementById('syncNsBatchBtn').addEventListener('click', showSyncNsBatchModal);
+                document.getElementById('confirmSyncNsBatchBtn').addEventListener('click', runSyncNsBatch);
+                document.getElementById('syncNsBatchModal').addEventListener('hidden.bs.modal', function() {
+                    document.getElementById('confirmSyncNsBatchBtn').style.display = '';
+                    document.getElementById('confirmSyncNsBatchBtn').disabled = false;
+                    document.getElementById('syncNsBatchCancelBtn').disabled = false;
+                    document.getElementById('syncNsBatchCancelBtn').innerHTML = '<i class="iconfont icon-xmark"></i> 取消';
+                    document.getElementById('syncNsBatchProgressBar').classList.add('progress-bar-animated');
+                });
+
                 // 重置表单
                 function resetForm() {
                     document.getElementById('domainId').value = '';
@@ -7493,6 +7820,38 @@ async function handleApiRequest(request) {
     }
   }
   
+  // 批量 / 单域名同步 NS（WHOIS 查询 DNS 服务器）
+  if (path === '/api/domains/sync-nameservers' && request.method === 'POST') {
+    try {
+      const body = await request.json().catch(() => ({}));
+      if (body.dnsheOnly) {
+        const dnsheUpdated = await syncDnsheDomainMetadata();
+        return jsonResponse({ success: true, dnsheUpdated });
+      }
+      const ids = Array.isArray(body.ids) ? body.ids : null;
+      const result = await syncDomainsNameservers({ ids });
+      return jsonResponse({ success: true, ...result });
+    } catch (error) {
+      return jsonResponse({
+        success: false,
+        error: error.message || '批量检测 NS 失败',
+      }, 400);
+    }
+  }
+
+  if (path.match(/^\/api\/domains\/[^\/]+\/sync-nameservers$/) && request.method === 'POST') {
+    const id = path.split('/')[3];
+    try {
+      const result = await syncDomainNameservers(id);
+      return jsonResponse({ success: true, ...result });
+    } catch (error) {
+      return jsonResponse({
+        success: false,
+        error: error.message || '检测 NS 失败',
+      }, 400);
+    }
+  }
+
   // 刷新检测到期时间（WHOIS 查询注册商并同步本地记录）
   if (path.match(/^\/api\/domains\/[^\/]+\/sync-expiry$/) && request.method === 'POST') {
     const id = path.split('/')[3];
@@ -7982,6 +8341,131 @@ async function deleteDomain(id) {
   return true;
 }
 
+// 同步单个域名的 DNS 服务器（WHOIS），用于 Cloudflare 托管检测
+async function syncDomainNameservers(id) {
+  const domains = await getDomains();
+  const index = domains.findIndex((d) => d.id === id);
+  if (index === -1) {
+    throw new Error('域名不存在');
+  }
+
+  const domain = domains[index];
+  const whoisFn = getWhoisQueryFunction(domain.name);
+  if (!whoisFn) {
+    throw new Error('该域名不支持自动查询 NS');
+  }
+
+  let result;
+  try {
+    result = await whoisFn(domain.name);
+  } catch (e) {
+    throw new Error('查询 WHOIS 失败: ' + (e.message || '未知错误'));
+  }
+
+  if (!result.success) {
+    throw new Error(result.error || '查询 WHOIS 失败');
+  }
+
+  if (!result.nameservers?.length) {
+    return {
+      ...domain,
+      changed: false,
+      noNameservers: true,
+      cloudflareDelegated: isCloudflareDelegated(domain),
+    };
+  }
+
+  const applied = applyNameserversUpdate(domain, result.nameservers);
+  if (applied.changed) {
+    domains[index] = applied.domain;
+    await DOMAIN_MONITOR.put('domains', JSON.stringify(domains));
+  }
+
+  const updatedDomain = domains[index];
+  return {
+    ...updatedDomain,
+    changed: applied.changed,
+    nameservers: applied.nameservers,
+    cloudflareDelegated: isCloudflareDelegated(updatedDomain),
+    cloudflare: getCloudflareHostInfo(updatedDomain),
+  };
+}
+
+async function syncDomainsNameservers({ ids = null } = {}) {
+  await syncDnsheDomainMetadata();
+
+  let domains = await getDomains();
+  const idSet = ids && ids.length ? new Set(ids) : null;
+  const results = [];
+  let kvDirty = false;
+
+  for (let i = 0; i < domains.length; i++) {
+    const domain = domains[i];
+    if (idSet && !idSet.has(domain.id)) continue;
+
+    const whoisFn = getWhoisQueryFunction(domain.name);
+    if (!whoisFn) {
+      results.push({ name: domain.name, status: 'skipped', reason: 'unsupported' });
+      continue;
+    }
+
+    if (isDnsheDomain(domain.name) && normalizeNameservers(domain.nameservers).length) {
+      results.push({
+        name: domain.name,
+        status: 'ok',
+        changed: false,
+        cloudflareDelegated: isCloudflareDelegated(domain),
+        fromDnshe: true,
+      });
+      continue;
+    }
+
+    try {
+      const whoisResult = await whoisFn(domain.name);
+      if (!whoisResult.success) {
+        results.push({ name: domain.name, status: 'error', error: whoisResult.error || '查询失败' });
+        continue;
+      }
+      if (!whoisResult.nameservers?.length) {
+        results.push({
+          name: domain.name,
+          status: 'no_ns',
+          cloudflareDelegated: isCloudflareDelegated(domain),
+        });
+        continue;
+      }
+
+      const applied = applyNameserversUpdate(domains[i], whoisResult.nameservers);
+      if (applied.changed) {
+        domains[i] = applied.domain;
+        kvDirty = true;
+      }
+
+      results.push({
+        name: domain.name,
+        status: 'ok',
+        changed: applied.changed,
+        cloudflareDelegated: isCloudflareDelegated(domains[i]),
+        nameservers: applied.nameservers,
+      });
+    } catch (error) {
+      results.push({ name: domain.name, status: 'error', error: error.message || '查询失败' });
+    }
+  }
+
+  if (kvDirty) {
+    await DOMAIN_MONITOR.put('domains', JSON.stringify(domains));
+  }
+
+  return {
+    total: results.length,
+    updated: results.filter((r) => r.changed).length,
+    cloudflare: results.filter((r) => r.cloudflareDelegated).length,
+    failed: results.filter((r) => r.status === 'error').length,
+    results,
+  };
+}
+
 // 刷新检测到期时间：WHOIS 查询注册商，同步到期日到本地记录
 async function syncDomainExpiry(id) {
   const domains = await getDomains();
@@ -8096,6 +8580,7 @@ async function getTelegramConfig() {
     cardLayout: config.cardLayout || '4', // 返回卡片布局配置
     defaultRenewLinks: resolveDefaultRenewLinks(config.defaultRenewLinks),
     renewWindowDays: resolveRenewWindowDays(config.renewWindowDays),
+    pushChannels: sanitizePushChannels(config.pushChannels),
   };
 }
 
@@ -8131,6 +8616,7 @@ async function saveTelegramConfig(configData) {
     cardLayout: configData.cardLayout || '4', // 保存卡片布局配置
     defaultRenewLinks: sanitizeDefaultRenewLinks(configData.defaultRenewLinks),
     renewWindowDays: sanitizeRenewWindowDays(configData.renewWindowDays),
+    pushChannels: sanitizePushChannels(configData.pushChannels),
   };
   
   await DOMAIN_MONITOR.put('telegram_config', JSON.stringify(config));
@@ -8176,51 +8662,55 @@ async function saveTelegramConfig(configData) {
     cardLayout: config.cardLayout, // 返回卡片布局配置
     defaultRenewLinks: resolveDefaultRenewLinks(config.defaultRenewLinks),
     renewWindowDays: resolveRenewWindowDays(config.renewWindowDays),
+    pushChannels: sanitizePushChannels(config.pushChannels),
   };
 }
 
-// 测试Telegram通知 (修改版：模拟域名到期格式)
+// 测试通知（所有已启用渠道）
 async function testTelegramNotification() {
   const config = await getTelegramConfigWithToken();
-  
-  if (!config.enabled) {
-    throw new Error('Telegram通知未启用');
+
+  if (!isAnyPushChannelConfigured(config)) {
+    throw new Error('请至少启用并配置一个通知渠道（Telegram 或其他推送）');
   }
-  
-  if (!config.botToken && typeof TG_TOKEN === 'undefined' && DEFAULT_TG_TOKEN === '') {
-    throw new Error('未配置Telegram机器人Token');
-  }
-  
-  if (!config.chatId && typeof TG_ID === 'undefined' && DEFAULT_TG_ID === '') {
-    throw new Error('未配置Telegram聊天ID');
-  }
-  
-  // === 构造模拟数据 ===
-  // 1. 计算到期日期 (今天 + 90天)
+
   const today = new Date();
   const targetDate = new Date(today);
   targetDate.setDate(today.getDate() + 90);
-  // 格式化日期 YYYY-MM-DD
-  const year = targetDate.getFullYear();
-  const month = String(targetDate.getMonth() + 1).padStart(2, '0');
-  const day = String(targetDate.getDate()).padStart(2, '0');
-  const formattedDate = `${year}-${month}-${day}`;
+  const formattedDate = formatDate(targetDate.toISOString());
 
-  // 2. 构造消息内容 (使用卡片通知的样式)
-  const title = '🚨 <b>域名到期测试通知</b> 🚨';
+  const plainTitle = '🚨 域名到期测试通知 🚨';
+  const htmlTitle = '🚨 <b>域名到期测试通知</b> 🚨';
   const separator = '=======================';
-  
-  let message = title + '\n' + separator + '\n\n';
-  
-  message += '🌍 <b>域名:</b> xx.pp.ua\n';
-  message += '🏬 <b>注册厂商:</b> NIC.UA\n';
-  message += '⏳ <b>剩余时间:</b> 90 天\n';
-  message += '📅 <b>到期日期:</b> ' + formattedDate + '\n';
   const testRenewLink = getEffectiveRenewLink({ name: 'xx.pp.ua', renewLink: '' }, config.defaultRenewLinks);
-  message += '⚠️ <b>点击续期:</b> ' + escapeHtmlBackend(testRenewLink || '未设置续期链接') + '\n';
-  
-  const result = await sendTelegramMessage(config, message);
-  return { success: true, message: '测试通知已发送' };
+
+  const bodyPlain = [
+    '🌍 域名: xx.pp.ua',
+    '🏬 注册厂商: NIC.UA',
+    '⏳ 剩余时间: 90 天',
+    '📅 到期日期: ' + formattedDate,
+    '⚠️ 点击续期: ' + (testRenewLink || '未设置续期链接'),
+  ].join('\n');
+
+  const bodyHtml = [
+    '🌍 <b>域名:</b> xx.pp.ua',
+    '🏬 <b>注册厂商:</b> NIC.UA',
+    '⏳ <b>剩余时间:</b> 90 天',
+    '📅 <b>到期日期:</b> ' + formattedDate,
+    '⚠️ <b>点击续期:</b> ' + escapeHtmlBackend(testRenewLink || '未设置续期链接'),
+  ].join('\n');
+
+  const result = await sendNotifyAll(config, sendTelegramMessage, {
+    title: plainTitle,
+    body: bodyPlain,
+    html: htmlTitle + '\n' + separator + '\n\n' + bodyHtml,
+  });
+
+  return {
+    success: true,
+    message: `测试通知已发送（成功 ${result.sent} 个渠道${result.failed ? '，失败 ' + result.failed + ' 个' : ''}）`,
+    details: result.results.filter((r) => !r.skipped),
+  };
 }
 
 // 获取完整的Telegram配置（包括token）
@@ -8271,6 +8761,7 @@ async function getTelegramConfigWithToken() {
     notifyDays: config.notifyDays || 30,
     defaultRenewLinks: resolveDefaultRenewLinks(config.defaultRenewLinks),
     renewWindowDays: resolveRenewWindowDays(config.renewWindowDays),
+    pushChannels: sanitizePushChannels(config.pushChannels),
   };
 }
 
@@ -8452,6 +8943,450 @@ async function moveCategoryOrder(id, direction) {
 
 // ================================
 
+// ================================
+// 多通道推送（移植自青龙 notify，纯 fetch）
+// ================================
+
+// TEMP - will be inlined into index.js
+
+async function feishuBotSign(secret) {
+  const timestamp = Math.floor(Date.now() / 1000).toString();
+  const stringToSign = timestamp + '\n' + secret;
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    'raw', enc.encode(stringToSign), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'],
+  );
+  const sig = await crypto.subtle.sign('HMAC', key, new Uint8Array(0));
+  return { timestamp, sign: btoa(String.fromCharCode(...new Uint8Array(sig))) };
+}
+
+function utf8ToBase64(text) {
+  return btoa(String.fromCharCode(...new TextEncoder().encode(String(text || ''))));
+}
+
+const NOTIFY_FETCH_TIMEOUT_MS = 15000;
+
+async function notifyFetch(url, options = {}) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), NOTIFY_FETCH_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+async function notifyPostJson(url, json, headers = {}) {
+  const response = await notifyFetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...headers },
+    body: JSON.stringify(json),
+  });
+  const text = await response.text();
+  let data;
+  try { data = JSON.parse(text); } catch { data = text; }
+  if (!response.ok) {
+    throw new Error(typeof data === 'object' && data?.msg ? data.msg : (text || response.statusText));
+  }
+  return data;
+}
+
+async function notifyPostForm(url, body, headers = {}) {
+  const response = await notifyFetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', ...headers },
+    body,
+  });
+  const text = await response.text();
+  let data;
+  try { data = JSON.parse(text); } catch { data = text; }
+  if (!response.ok) {
+    throw new Error(typeof data === 'object' && data?.message ? data.message : (text || response.statusText));
+  }
+  return data;
+}
+
+function trimPushStr(v, maxLen = 2048) {
+  if (v === null || v === undefined) return '';
+  return String(v).trim().slice(0, maxLen);
+}
+
+function pickPushField(ch, key, envVal) {
+  const fromKv = ch && ch[key] !== undefined && ch[key] !== null ? String(ch[key]).trim() : '';
+  if (fromKv) return fromKv;
+  if (envVal !== undefined && envVal !== null && String(envVal).trim()) return String(envVal).trim();
+  return '';
+}
+
+function getPushEnvMap() {
+  return {
+    BARK_PUSH: typeof BARK_PUSH !== 'undefined' ? BARK_PUSH : undefined,
+    PUSH_KEY: typeof PUSH_KEY !== 'undefined' ? PUSH_KEY : undefined,
+    PUSH_PLUS_TOKEN: typeof PUSH_PLUS_TOKEN !== 'undefined' ? PUSH_PLUS_TOKEN : undefined,
+    DEER_KEY: typeof DEER_KEY !== 'undefined' ? DEER_KEY : undefined,
+    DD_BOT_TOKEN: typeof DD_BOT_TOKEN !== 'undefined' ? DD_BOT_TOKEN : undefined,
+    DD_BOT_SECRET: typeof DD_BOT_SECRET !== 'undefined' ? DD_BOT_SECRET : undefined,
+    QYWX_KEY: typeof QYWX_KEY !== 'undefined' ? QYWX_KEY : undefined,
+    QYWX_AM: typeof QYWX_AM !== 'undefined' ? QYWX_AM : undefined,
+    FSKEY: typeof FSKEY !== 'undefined' ? FSKEY : undefined,
+    FSSECRET: typeof FSSECRET !== 'undefined' ? FSSECRET : undefined,
+    GOTIFY_TOKEN: typeof GOTIFY_TOKEN !== 'undefined' ? GOTIFY_TOKEN : undefined,
+    IGOT_PUSH_KEY: typeof IGOT_PUSH_KEY !== 'undefined' ? IGOT_PUSH_KEY : undefined,
+    PUSHME_KEY: typeof PUSHME_KEY !== 'undefined' ? PUSHME_KEY : undefined,
+    WEBHOOK_URL: typeof WEBHOOK_URL !== 'undefined' ? WEBHOOK_URL : undefined,
+    NTFY_TOPIC: typeof NTFY_TOPIC !== 'undefined' ? NTFY_TOPIC : undefined,
+    NTFY_TOKEN: typeof NTFY_TOKEN !== 'undefined' ? NTFY_TOKEN : undefined,
+    WXPUSHER_APP_TOKEN: typeof WXPUSHER_APP_TOKEN !== 'undefined' ? WXPUSHER_APP_TOKEN : undefined,
+    QMSG_KEY: typeof QMSG_KEY !== 'undefined' ? QMSG_KEY : undefined,
+    WE_PLUS_BOT_TOKEN: typeof WE_PLUS_BOT_TOKEN !== 'undefined' ? WE_PLUS_BOT_TOKEN : undefined,
+    AIBOTK_KEY: typeof AIBOTK_KEY !== 'undefined' ? AIBOTK_KEY : undefined,
+    CHAT_TOKEN: typeof CHAT_TOKEN !== 'undefined' ? CHAT_TOKEN : undefined,
+    CHAT_URL: typeof CHAT_URL !== 'undefined' ? CHAT_URL : undefined,
+    GOBOT_URL: typeof GOBOT_URL !== 'undefined' ? GOBOT_URL : undefined,
+    GOBOT_TOKEN: typeof GOBOT_TOKEN !== 'undefined' ? GOBOT_TOKEN : undefined,
+    CHRONOCAT_TOKEN: typeof CHRONOCAT_TOKEN !== 'undefined' ? CHRONOCAT_TOKEN : undefined,
+    CHRONOCAT_URL: typeof CHRONOCAT_URL !== 'undefined' ? CHRONOCAT_URL : undefined,
+  };
+}
+
+export function sanitizePushChannels(input) {
+  const out = {};
+  if (!input || typeof input !== 'object') return out;
+  for (const id of Object.keys(input)) {
+    const ch = input[id];
+    if (!ch || typeof ch !== 'object') continue;
+    const enabled = !!ch.enabled;
+    const fields = {};
+    for (const [k, v] of Object.entries(ch)) {
+      if (k === 'enabled') continue;
+      if (v !== null && v !== undefined && String(v).trim() !== '') {
+        fields[k] = trimPushStr(v, k === 'body' || k === 'headers' ? 8192 : 2048);
+      }
+    }
+    out[id] = { enabled, ...fields };
+  }
+  return out;
+}
+
+export function resolvePushChannels(stored) {
+  const kv = sanitizePushChannels(stored);
+  const env = getPushEnvMap();
+  const pick = (id, key, envKey) => {
+    const ch = kv[id] || {};
+    return {
+      enabled: !!ch.enabled,
+      value: pickPushField(ch, key, env[envKey]),
+      config: ch,
+    };
+  };
+  return {
+    bark: { ...pick('bark', 'push', 'BARK_PUSH'), group: trimPushStr(kv.bark?.group), sound: trimPushStr(kv.bark?.sound), icon: trimPushStr(kv.bark?.icon), level: trimPushStr(kv.bark?.level), archive: trimPushStr(kv.bark?.archive), url: trimPushStr(kv.bark?.url) },
+    serverChan: pick('serverChan', 'key', 'PUSH_KEY'),
+    pushPlus: { ...pick('pushPlus', 'token', 'PUSH_PLUS_TOKEN'), user: trimPushStr(kv.pushPlus?.user), template: trimPushStr(kv.pushPlus?.template) || 'html', channel: trimPushStr(kv.pushPlus?.channel) || 'wechat', webhook: trimPushStr(kv.pushPlus?.webhook), callbackUrl: trimPushStr(kv.pushPlus?.callbackUrl), to: trimPushStr(kv.pushPlus?.to) },
+    pushDeer: { ...pick('pushDeer', 'key', 'DEER_KEY'), url: trimPushStr(kv.pushDeer?.url) || 'https://api2.pushdeer.com/message/push' },
+    dingtalk: { ...pick('dingtalk', 'token', 'DD_BOT_TOKEN'), secret: pickPushField(kv.dingtalk, 'secret', env.DD_BOT_SECRET) },
+    qywxBot: { ...pick('qywxBot', 'key', 'QYWX_KEY'), origin: trimPushStr(kv.qywxBot?.origin) || 'https://qyapi.weixin.qq.com' },
+    qywxAm: pick('qywxAm', 'am', 'QYWX_AM'),
+    feishu: { ...pick('feishu', 'key', 'FSKEY'), secret: pickPushField(kv.feishu, 'secret', env.FSSECRET) },
+    gotify: { ...pick('gotify', 'token', 'GOTIFY_TOKEN'), url: trimPushStr(kv.gotify?.url), priority: kv.gotify?.priority ?? 0 },
+    igot: pick('igot', 'key', 'IGOT_PUSH_KEY'),
+    pushMe: { ...pick('pushMe', 'key', 'PUSHME_KEY'), url: trimPushStr(kv.pushMe?.url) || 'https://push.i-i.me' },
+    webhook: { ...pick('webhook', 'url', 'WEBHOOK_URL'), method: trimPushStr(kv.webhook?.method) || 'POST', body: trimPushStr(kv.webhook?.body, 8192), headers: trimPushStr(kv.webhook?.headers, 8192), contentType: trimPushStr(kv.webhook?.contentType) || 'application/json' },
+    ntfy: { ...pick('ntfy', 'topic', 'NTFY_TOPIC'), url: trimPushStr(kv.ntfy?.url) || 'https://ntfy.sh', priority: trimPushStr(kv.ntfy?.priority) || '3', token: pickPushField(kv.ntfy, 'token', env.NTFY_TOKEN), username: trimPushStr(kv.ntfy?.username), password: pickPushField(kv.ntfy, 'password', undefined) },
+    wxPusher: { ...pick('wxPusher', 'appToken', 'WXPUSHER_APP_TOKEN'), topicIds: trimPushStr(kv.wxPusher?.topicIds), uids: trimPushStr(kv.wxPusher?.uids) },
+    qmsg: { ...pick('qmsg', 'key', 'QMSG_KEY'), type: trimPushStr(kv.qmsg?.type) || 'send' },
+    wePlusBot: { ...pick('wePlusBot', 'token', 'WE_PLUS_BOT_TOKEN'), receiver: trimPushStr(kv.wePlusBot?.receiver), version: trimPushStr(kv.wePlusBot?.version) || 'pro' },
+    aibotk: { ...pick('aibotk', 'key', 'AIBOTK_KEY'), type: trimPushStr(kv.aibotk?.type) || 'contact', name: trimPushStr(kv.aibotk?.name) },
+    synologyChat: { ...pick('synologyChat', 'token', 'CHAT_TOKEN'), url: pickPushField(kv.synologyChat, 'url', env.CHAT_URL) },
+    gobot: { ...pick('gobot', 'url', 'GOBOT_URL'), token: pickPushField(kv.gobot, 'token', env.GOBOT_TOKEN), qq: trimPushStr(kv.gobot?.qq) },
+    chronocat: { ...pick('chronocat', 'url', 'CHRONOCAT_URL'), token: pickPushField(kv.chronocat, 'token', env.CHRONOCAT_TOKEN), qq: trimPushStr(kv.chronocat?.qq) },
+  };
+}
+
+export function isAnyPushChannelConfigured(appConfig) {
+  if (appConfig?.enabled && appConfig?.botToken && appConfig?.chatId) return true;
+  const push = resolvePushChannels(appConfig?.pushChannels);
+  for (const id of Object.keys(push)) {
+    const item = push[id];
+    if (!item.enabled) continue;
+    if (item.value) return true;
+    if (id === 'gotify' && item.url) return true;
+    if (id === 'synologyChat' && item.url) return true;
+    if (id === 'gobot' && item.config?.url) return true;
+    if (id === 'chronocat' && item.url && item.qq) return true;
+    if (id === 'aibotk' && item.value && item.name) return true;
+    if (id === 'webhook' && item.value && item.method) return true;
+  }
+  return false;
+}
+
+function parseWebhookHeaders(raw) {
+  const parsed = {};
+  if (!raw) return parsed;
+  raw.split('\n').forEach((line) => {
+    const i = line.indexOf(':');
+    if (i === -1) return;
+    const key = line.slice(0, i).trim().toLowerCase();
+    const val = line.slice(i + 1).trim();
+    if (key) parsed[key] = parsed[key] ? parsed[key] + ', ' + val : val;
+  });
+  return parsed;
+}
+
+function applyWebhookTemplate(str, title, content) {
+  return String(str || '').replaceAll('$title', title).replaceAll('$content', content);
+}
+
+async function pushBark(ch, title, body) {
+  if (!ch.enabled || !ch.value) return null;
+  let url = ch.value;
+  if (!url.startsWith('http')) url = 'https://api.day.app/' + url;
+  const data = await notifyPostJson(url, { title, body, group: ch.group || undefined, sound: ch.sound || undefined, icon: ch.icon || undefined, level: ch.level || undefined, isArchive: ch.archive || undefined, url: ch.url || undefined });
+  if (data.code !== 200) throw new Error(data.message || 'Bark 推送失败');
+  return true;
+}
+
+async function pushServerChan(ch, title, body) {
+  if (!ch.enabled || !ch.value) return null;
+  const desp = body.replace(/[\n\r]/g, '\n\n');
+  const match = ch.value.match(/^sctp(\d+)t/i);
+  const url = match && match[1] ? `https://${match[1]}.push.ft07.com/send/${ch.value}.send` : `https://sctapi.ftqq.com/${ch.value}.send`;
+  const data = await notifyPostForm(url, `text=${encodeURIComponent(title)}&desp=${encodeURIComponent(desp)}`);
+  if (!(data.errno === 0 || data.data?.errno === 0)) throw new Error(data.errmsg || data.data?.errmsg || 'Server酱推送失败');
+  return true;
+}
+
+async function pushPushPlus(ch, title, body) {
+  if (!ch.enabled || !ch.value) return null;
+  const data = await notifyPostJson('https://www.pushplus.plus/send', { token: ch.value, title, content: body.replace(/[\n\r]/g, '<br>'), topic: ch.user || undefined, template: ch.template, channel: ch.channel, webhook: ch.webhook || undefined, callbackUrl: ch.callbackUrl || undefined, to: ch.to || undefined });
+  if (data.code !== 200) throw new Error(data.msg || 'PushPlus 推送失败');
+  return true;
+}
+
+async function pushPushDeer(ch, title, body) {
+  if (!ch.enabled || !ch.value) return null;
+  const data = await notifyPostForm(ch.url, `pushkey=${encodeURIComponent(ch.value)}&text=${encodeURIComponent(title)}&desp=${encodeURIComponent(body)}&type=markdown`);
+  if (!data.content?.result?.length) throw new Error('PushDeer 推送失败');
+  return true;
+}
+
+async function pushDingtalk(ch, title, body) {
+  if (!ch.enabled || !ch.value) return null;
+  let url = `https://oapi.dingtalk.com/robot/send?access_token=${encodeURIComponent(ch.value)}`;
+  if (ch.secret) {
+    const ts = Date.now();
+    url += `&timestamp=${ts}&sign=${encodeURIComponent(await hmacSha256Base64(ch.secret, `${ts}\n${ch.secret}`))}`;
+  }
+  const data = await notifyPostJson(url, { msgtype: 'text', text: { content: `${title}\n\n${body}` } });
+  if (data.errcode !== 0) throw new Error(data.errmsg || '钉钉推送失败');
+  return true;
+}
+
+async function pushQywxBot(ch, title, body) {
+  if (!ch.enabled || !ch.value) return null;
+  const data = await notifyPostJson(`${ch.origin}/cgi-bin/webhook/send?key=${encodeURIComponent(ch.value)}`, { msgtype: 'text', text: { content: `${title}\n\n${body}` } });
+  if (data.errcode !== 0) throw new Error(data.errmsg || '企业微信机器人推送失败');
+  return true;
+}
+
+async function pushQywxAm(ch, title, body) {
+  if (!ch.enabled || !ch.value) return null;
+  const parts = ch.value.split(',');
+  if (parts.length < 4) throw new Error('QYWX_AM 格式: corpid,corpsecret,touser,agentid');
+  const origin = trimPushStr(parts[5]) || 'https://qyapi.weixin.qq.com';
+  const tokenData = await notifyPostJson(`${origin}/cgi-bin/gettoken`, { corpid: parts[0], corpsecret: parts[1] });
+  if (!tokenData.access_token) throw new Error(tokenData.errmsg || '获取企业微信 token 失败');
+  const payload = (parts[4] === '0')
+    ? { msgtype: 'textcard', textcard: { title, description: body, url: 'https://github.com', btntxt: '更多' } }
+    : { msgtype: 'text', text: { content: `${title}\n\n${body}` } };
+  const data = await notifyPostJson(`${origin}/cgi-bin/message/send?access_token=${tokenData.access_token}`, { touser: parts[2] || '@all', agentid: parts[3], safe: '0', ...payload });
+  if (data.errcode !== 0) throw new Error(data.errmsg || '企业微信应用推送失败');
+  return true;
+}
+
+async function pushFeishu(ch, title, body) {
+  if (!ch.enabled || !ch.value) return null;
+  const json = { msg_type: 'text', content: { text: `${title}\n\n${body}` } };
+  if (ch.secret) {
+    const { timestamp, sign } = await feishuBotSign(ch.secret);
+    json.timestamp = timestamp;
+    json.sign = sign;
+  }
+  const data = await notifyPostJson(`https://open.feishu.cn/open-apis/bot/v2/hook/${ch.value}`, json);
+  if (!(data.StatusCode === 0 || data.code === 0)) throw new Error(data.msg || '飞书推送失败');
+  return true;
+}
+
+async function pushGotify(ch, title, body) {
+  if (!ch.enabled || !ch.value || !ch.url) return null;
+  const data = await notifyPostForm(`${ch.url.replace(/\/$/, '')}/message?token=${encodeURIComponent(ch.value)}`, `title=${encodeURIComponent(title)}&message=${encodeURIComponent(body)}&priority=${encodeURIComponent(String(ch.priority ?? 0))}`);
+  if (!data.id) throw new Error(data.message || 'Gotify 推送失败');
+  return true;
+}
+
+async function pushIgot(ch, title, body) {
+  if (!ch.enabled || !ch.value) return null;
+  if (!/^[a-zA-Z0-9]{24}$/.test(ch.value)) throw new Error('IGOT_PUSH_KEY 无效');
+  const data = await notifyPostForm(`https://push.hellyw.com/${ch.value.toLowerCase()}`, `title=${encodeURIComponent(title)}&content=${encodeURIComponent(body)}`);
+  if (data.ret !== 0) throw new Error(data.errMsg || 'iGot 推送失败');
+  return true;
+}
+
+async function pushPushMe(ch, title, body) {
+  if (!ch.enabled || !ch.value) return null;
+  const response = await notifyFetch(ch.url || 'https://push.i-i.me', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ push_key: ch.value, title, content: body }) });
+  const text = await response.text();
+  if (text !== 'success') throw new Error(text || 'PushMe 推送失败');
+  return true;
+}
+
+async function pushWebhook(ch, title, body) {
+  if (!ch.enabled || !ch.value || !ch.method) return null;
+  if (!ch.value.includes('$title') && !(ch.body || '').includes('$title')) return null;
+  const headers = parseWebhookHeaders(ch.headers);
+  const url = applyWebhookTemplate(ch.value, encodeURIComponent(title), encodeURIComponent(body));
+  let fetchBody;
+  const ct = ch.contentType || 'application/json';
+  if (ch.body) {
+    const replaced = applyWebhookTemplate(ch.body, title.replaceAll('\n', '\\n'), body.replaceAll('\n', '\\n'));
+    if (ct === 'application/json') {
+      fetchBody = replaced;
+      headers['content-type'] = 'application/json';
+    } else {
+      fetchBody = replaced;
+      headers['content-type'] = ct;
+    }
+  }
+  const response = await notifyFetch(url, { method: ch.method.toUpperCase(), headers, body: fetchBody });
+  if (!response.ok) throw new Error(await response.text() || 'Webhook 推送失败');
+  return true;
+}
+
+async function pushNtfy(ch, title, body) {
+  if (!ch.enabled || !ch.value) return null;
+  const headers = { Title: `=?utf-8?B?${utf8ToBase64(title)}?=`, Priority: ch.priority || '3' };
+  if (ch.token) headers.Authorization = `Bearer ${ch.token}`;
+  else if (ch.username && ch.password) headers.Authorization = `Basic ${utf8ToBase64(`${ch.username}:${ch.password}`)}`;
+  const response = await notifyFetch(`${ch.url.replace(/\/$/, '')}/${encodeURIComponent(ch.value)}`, { method: 'POST', headers, body });
+  if (!response.ok) throw new Error(await response.text() || 'ntfy 推送失败');
+  return true;
+}
+
+async function pushWxPusher(ch, title, body) {
+  if (!ch.enabled || !ch.value) return null;
+  const topicIds = (ch.topicIds || '').split(';').map((s) => s.trim()).filter(Boolean).map((n) => parseInt(n, 10)).filter((n) => !Number.isNaN(n));
+  const uids = (ch.uids || '').split(';').map((s) => s.trim()).filter(Boolean);
+  if (!topicIds.length && !uids.length) throw new Error('wxPusher topicIds 与 uids 至少填一个');
+  const data = await notifyPostJson('https://wxpusher.zjiecode.com/api/send/message', { appToken: ch.value, content: `<h1>${escapeHtml(title)}</h1><br/><div style='white-space: pre-wrap;'>${escapeHtml(body)}</div>`, summary: title, contentType: 2, topicIds, uids, verifyPayType: 0 });
+  if (data.code !== 1000) throw new Error(data.msg || 'wxPusher 推送失败');
+  return true;
+}
+
+async function pushQmsg(ch, title, body) {
+  if (!ch.enabled || !ch.value) return null;
+  const data = await notifyPostForm(`https://qmsg.zendee.cn/${encodeURIComponent(ch.type || 'send')}/${encodeURIComponent(ch.value)}`, `msg=${encodeURIComponent(title + '\n\n' + body.replace('----', '-'))}`);
+  if (data.code !== 0) throw new Error(String(data) || 'Qmsg 推送失败');
+  return true;
+}
+
+async function pushWePlusBot(ch, title, body) {
+  if (!ch.enabled || !ch.value) return null;
+  let content = body;
+  let template = 'txt';
+  if (content.length > 800) { content = content.replace(/[\n\r]/g, '<br>'); template = 'html'; }
+  const data = await notifyPostJson('https://www.weplusbot.com/send', { token: ch.value, title, content, template, receiver: ch.receiver || undefined, version: ch.version || 'pro' });
+  if (data.code !== 200) throw new Error(data.msg || '微加机器人推送失败');
+  return true;
+}
+
+async function pushAibotk(ch, title, body) {
+  if (!ch.enabled || !ch.value || !ch.name) return null;
+  const msg = `【域名监控】\n\n${title}\n${body}`;
+  const url = ch.type === 'room' ? 'https://api-bot.aibotk.com/openapi/v1/chat/room' : 'https://api-bot.aibotk.com/openapi/v1/chat/contact';
+  const json = ch.type === 'room' ? { apiKey: ch.value, roomName: ch.name, message: { type: 1, content: msg } } : { apiKey: ch.value, name: ch.name, message: { type: 1, content: msg } };
+  const data = await notifyPostJson(url, json);
+  if (data.code !== 0) throw new Error(data.error || '智能微秘书推送失败');
+  return true;
+}
+
+async function pushSynologyChat(ch, title, body) {
+  if (!ch.enabled || !ch.value || !ch.url) return null;
+  const data = await notifyPostForm(`${ch.url}${ch.value}`, `payload=${encodeURIComponent(JSON.stringify({ text: `${title}\n${body}` }))}`);
+  if (!data.success) throw new Error(JSON.stringify(data) || 'Synology Chat 推送失败');
+  return true;
+}
+
+async function pushGobot(ch, title, body) {
+  if (!ch.enabled || !ch.value) return null;
+  const tokenPart = ch.token ? `access_token=${encodeURIComponent(ch.token)}` : '';
+  const qqPart = ch.qq || '';
+  const join = tokenPart && qqPart ? '&' : '';
+  const url = `${ch.value}?${tokenPart}${join}${qqPart}`;
+  const data = await notifyPostJson(url, { message: `${title}\n${body}` });
+  if (data.retcode !== 0 && data.retcode !== undefined) throw new Error(data.errmsg || 'Go-cqhttp 推送失败');
+  return true;
+}
+
+async function pushChronocat(ch, title, body) {
+  if (!ch.enabled || !ch.value || !ch.url || !ch.qq) return null;
+  const userIds = [...(ch.qq.match(/user_id=(\d+)/g) || [])].map((m) => m.split('=')[1]);
+  const groupIds = [...(ch.qq.match(/group_id=(\d+)/g) || [])].map((m) => m.split('=')[1]);
+  const url = `${ch.url.replace(/\/$/, '')}/api/message/send`;
+  const content = `${title}\n\n${body}`;
+  const tasks = [];
+  for (const peerUin of userIds) tasks.push(notifyPostJson(url, { peer: { chatType: 1, peerUin }, elements: [{ elementType: 1, textElement: { content } }] }, { Authorization: `Bearer ${ch.token}` }));
+  for (const peerUin of groupIds) tasks.push(notifyPostJson(url, { peer: { chatType: 2, peerUin }, elements: [{ elementType: 1, textElement: { content } }] }, { Authorization: `Bearer ${ch.token}` }));
+  if (!tasks.length) return null;
+  await Promise.all(tasks);
+  return true;
+}
+
+export async function sendNotifyAll(appConfig, sendTelegramFn, payload) {
+  const { title, body, html } = payload;
+  const textTitle = title || '';
+  const textBody = body || '';
+  const htmlMessage = html || `${textTitle}\n\n${textBody}`;
+  const push = resolvePushChannels(appConfig.pushChannels);
+  const senders = [
+    ['telegram', async () => { if (!appConfig?.enabled) return null; await sendTelegramFn(appConfig, htmlMessage); return true; }],
+    ['bark', () => pushBark(push.bark, textTitle, textBody)],
+    ['serverChan', () => pushServerChan(push.serverChan, textTitle, textBody)],
+    ['pushPlus', () => pushPushPlus(push.pushPlus, textTitle, textBody)],
+    ['pushDeer', () => pushPushDeer(push.pushDeer, textTitle, textBody)],
+    ['dingtalk', () => pushDingtalk(push.dingtalk, textTitle, textBody)],
+    ['qywxBot', () => pushQywxBot(push.qywxBot, textTitle, textBody)],
+    ['qywxAm', () => pushQywxAm(push.qywxAm, textTitle, textBody)],
+    ['feishu', () => pushFeishu(push.feishu, textTitle, textBody)],
+    ['gotify', () => pushGotify(push.gotify, textTitle, textBody)],
+    ['igot', () => pushIgot(push.igot, textTitle, textBody)],
+    ['pushMe', () => pushPushMe(push.pushMe, textTitle, textBody)],
+    ['webhook', () => pushWebhook(push.webhook, textTitle, textBody)],
+    ['ntfy', () => pushNtfy(push.ntfy, textTitle, textBody)],
+    ['wxPusher', () => pushWxPusher(push.wxPusher, textTitle, textBody)],
+    ['qmsg', () => pushQmsg(push.qmsg, textTitle, textBody)],
+    ['wePlusBot', () => pushWePlusBot(push.wePlusBot, textTitle, textBody)],
+    ['aibotk', () => pushAibotk(push.aibotk, textTitle, textBody)],
+    ['synologyChat', () => pushSynologyChat(push.synologyChat, textTitle, textBody)],
+    ['gobot', () => pushGobot(push.gobot, textTitle, textBody)],
+    ['chronocat', () => pushChronocat(push.chronocat, textTitle, textBody)],
+  ];
+  const results = await Promise.all(senders.map(async ([channel, fn]) => {
+    try {
+      const r = await fn();
+      if (r === null) return { channel, skipped: true, ok: true };
+      return { channel, ok: true };
+    } catch (error) {
+      return { channel, ok: false, error: error.message || String(error) };
+    }
+  }));
+  const sent = results.filter((r) => r.ok && !r.skipped);
+  const failed = results.filter((r) => !r.ok);
+  if (!sent.length && failed.length) {
+    throw new Error(failed.map((f) => f.channel + ': ' + f.error).join('; '));
+  }
+  return { results, sent: sent.length, failed: failed.length };
+}
+
 // 发送Telegram消息
 async function sendTelegramMessage(config, message) {
   // 优先使用配置中的值，如果没有则使用环境变量或代码中的值
@@ -8512,7 +9447,7 @@ async function checkExpiringDomains() {
   const now = new Date();
 
   const telegramConfig = await getTelegramConfigWithToken();
-  const globalNotifyDays = telegramConfig.enabled ? telegramConfig.notifyDays : 30;
+  const globalNotifyDays = telegramConfig.notifyDays || 30;
 
   // 第一步：对所有支持 WHOIS 的域名检测到期时间并同步本地记录
   const updatedDomains = [];
@@ -8575,10 +9510,8 @@ async function checkExpiringDomains() {
     }
   }
 
-  // 第三步：发送 Telegram 通知
-  if (telegramConfig.enabled &&
-      ((telegramConfig.botToken || typeof TG_TOKEN !== 'undefined') &&
-       (telegramConfig.chatId || typeof TG_ID !== 'undefined'))) {
+  // 第三步：发送到期 / 同步通知（所有已启用渠道）
+  if (isAnyPushChannelConfigured(telegramConfig)) {
     try {
       if (expiringDomains.length > 0 || expiredDomains.length > 0) {
         await sendCombinedDomainsNotification(telegramConfig, expiringDomains, expiredDomains);
@@ -8587,7 +9520,7 @@ async function checkExpiringDomains() {
         await sendDateUpdatedNotification(telegramConfig, updatedDomains);
       }
     } catch (error) {
-      // 静默处理 Telegram 通知发送失败
+      // 静默处理通知发送失败
     }
   }
 }
@@ -8612,139 +9545,121 @@ async function sendExpiringDomainsNotification(config, domains, isExpired) {
   let message = title + '\n' + separator + '\n\n';
   
   domains.forEach((domain, index) => {
-    const expiryDate = new Date(domain.expiryDate);
-    const today = new Date();
-    const daysLeft = Math.ceil((expiryDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
-
     if (index > 0) {
       message += '\n' + domainSeparator + '\n\n';
     }
-    
-    message += '🌍 <b>域名:</b> ' + escapeHtmlBackend(domain.name) + '\n';
-    if (domain.registrar) {
-      message += '🏬 <b>注册厂商:</b> ' + escapeHtmlBackend(domain.registrar) + '\n';
-    }
-    if (domain.registeredAccount) {
-      message += '👤 <b>注册账号:</b> ' + escapeHtmlBackend(domain.registeredAccount) + '\n';
-    }
-
-    message += '⏳ <b>剩余时间:</b> ' + daysLeft + ' 天\n';
-    message += '📅 <b>到期日期:</b> ' + formatDate(domain.expiryDate) + '\n';
-
-    message += formatRenewLinkNotificationLine(domain, config, true);
+    message += appendDomainExpiryLines(domain, config, true);
   });
   
-  // 发送消息
-  return await sendTelegramMessage(config, message);
+  return await sendNotifyAll(config, sendTelegramMessage, {
+    title: isExpired ? '🚫 域名已过期提醒 🚫' : '🚨 域名到期提醒 🚨',
+    body: message.replace(/<[^>]+>/g, ''),
+    html: message,
+  });
+}
+
+function appendDomainExpiryLines(domain, config, useHtmlBold) {
+  const expiryDate = new Date(domain.expiryDate);
+  const today = new Date();
+  const daysLeft = Math.ceil((expiryDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+  const b = useHtmlBold;
+  let lines = '';
+  lines += '🌍 ' + (b ? '<b>域名:</b> ' : '域名: ') + (b ? escapeHtmlBackend(domain.name) : domain.name) + '\n';
+  if (domain.registrar) lines += '🏬 ' + (b ? '<b>注册厂商:</b> ' : '注册厂商: ') + (b ? escapeHtmlBackend(domain.registrar) : domain.registrar) + '\n';
+  if (domain.registeredAccount) lines += '👤 ' + (b ? '<b>注册账号:</b> ' : '注册账号: ') + (b ? escapeHtmlBackend(domain.registeredAccount) : domain.registeredAccount) + '\n';
+  lines += '⏳ ' + (b ? '<b>剩余时间:</b> ' : '剩余时间: ') + daysLeft + ' 天\n';
+  lines += '📅 ' + (b ? '<b>到期日期:</b> ' : '到期日期: ') + formatDate(domain.expiryDate) + '\n';
+  lines += formatRenewLinkNotificationLine(domain, config, b);
+  return lines;
 }
 
 // 发送合并的域名通知（即将到期和已过期）
 async function sendCombinedDomainsNotification(config, expiringDomains, expiredDomains) {
   if (expiringDomains.length === 0 && expiredDomains.length === 0) return;
-  
-  let message = '';
-  
-  // 处理即将到期的域名
+
+  let textBody = '';
+  let htmlBody = '';
+
   if (expiringDomains.length > 0) {
-    const title = '🚨 <b>域名到期提醒</b> 🚨';
-    const separator = '===================';
-    
-    message += title + '\n' + separator + '\n\n';
-    
+    textBody += '🚨 域名到期提醒 🚨\n===================\n\n';
+    htmlBody += '🚨 <b>域名到期提醒</b> 🚨\n===================\n\n';
     expiringDomains.forEach((domain, index) => {
-      const expiryDate = new Date(domain.expiryDate);
-      const today = new Date();
-      const daysLeft = Math.ceil((expiryDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
-      
-      if (index > 0) {
-        message += '\n';
-      }
-      
-      message += '🌍 域名: ' + escapeHtmlBackend(domain.name) + '\n';
-      if (domain.registrar) {
-        message += '🏬 注册厂商: ' + escapeHtmlBackend(domain.registrar) + '\n';
-      }
-      if (domain.registeredAccount) {
-        message += '👤 注册账号: ' + escapeHtmlBackend(domain.registeredAccount) + '\n';
-    }
-      message += '⏳ 剩余时间: ' + daysLeft + ' 天\n';
-      message += '📅 到期日期: ' + formatDate(domain.expiryDate) + '\n';
-
-      message += formatRenewLinkNotificationLine(domain, config, false);
+      if (index > 0) { textBody += '\n'; htmlBody += '\n'; }
+      textBody += appendDomainExpiryLines(domain, config, false);
+      htmlBody += appendDomainExpiryLines(domain, config, true);
     });
   }
 
-  // 如果两种类型的域名都存在，添加分隔线
   if (expiringDomains.length > 0 && expiredDomains.length > 0) {
-    message += '\n━━━━━━━━━━━━━━━━\n\n';
+    textBody += '\n━━━━━━━━━━━━━━━━\n\n';
+    htmlBody += '\n━━━━━━━━━━━━━━━━\n\n';
   }
 
-  // 处理已过期的域名
   if (expiredDomains.length > 0) {
-    const title = '🚫 <b>域名已过期提醒</b> 🚫';
-    const separator = '=====================';
-
-    message += title + '\n' + separator + '\n\n';
-
+    textBody += '🚫 域名已过期提醒 🚫\n=====================\n\n';
+    htmlBody += '🚫 <b>域名已过期提醒</b> 🚫\n=====================\n\n';
     expiredDomains.forEach((domain, index) => {
-      const expiryDate = new Date(domain.expiryDate);
-      const today = new Date();
-      const daysLeft = Math.ceil((expiryDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
-
-      if (index > 0) {
-        message += '\n';
-      }
-
-      message += '🌍 域名: ' + escapeHtmlBackend(domain.name) + '\n';
-      if (domain.registrar) {
-        message += '🏬 注册厂商: ' + escapeHtmlBackend(domain.registrar) + '\n';
-      }
-      if (domain.registeredAccount) {
-        message += '👤 注册账号: ' + escapeHtmlBackend(domain.registeredAccount) + '\n';
-      }
-      message += '⏳ 剩余时间: ' + daysLeft + ' 天\n';
-      message += '📅 到期日期: ' + formatDate(domain.expiryDate) + '\n';
-
-      message += formatRenewLinkNotificationLine(domain, config, false);
+      if (index > 0) { textBody += '\n'; htmlBody += '\n'; }
+      textBody += appendDomainExpiryLines(domain, config, false);
+      htmlBody += appendDomainExpiryLines(domain, config, true);
     });
   }
-  
-  // 发送消息
-  return await sendTelegramMessage(config, message);
+
+  const title = expiredDomains.length && !expiringDomains.length
+    ? '🚫 域名已过期提醒 🚫'
+    : '🚨 域名到期提醒 🚨';
+
+  return await sendNotifyAll(config, sendTelegramMessage, {
+    title,
+    body: textBody.trim(),
+    html: htmlBody.trim(),
+  });
 }
 
 // 发送域名到期日期自动更新通知
 async function sendDateUpdatedNotification(config, updatedDomains) {
   if (updatedDomains.length === 0) return;
-  
-  const title = '🔄 <b>域名到期时间已自动同步</b> 🔄';
+
+  const plainTitle = '🔄 域名到期时间已自动同步 🔄';
+  const htmlTitle = '🔄 <b>域名到期时间已自动同步</b> 🔄';
   const separator = '======================';
-  
-  let message = title + '\n' + separator + '\n\n';
-  
+  let textBody = '';
+  let htmlBody = '';
+
   updatedDomains.forEach((domain, index) => {
-    if (index > 0) {
-      message += '\n';
-    }
-    
-    message += '🌍 域名: ' + escapeHtmlBackend(domain.name) + '\n';
+    if (index > 0) { textBody += '\n'; htmlBody += '\n'; }
+    textBody += '🌍 域名: ' + domain.name + '\n';
+    htmlBody += '🌍 域名: ' + escapeHtmlBackend(domain.name) + '\n';
     if (domain.registrar) {
-      message += '🏬 注册厂商: ' + escapeHtmlBackend(domain.registrar) + '\n';
+      textBody += '🏬 注册厂商: ' + domain.registrar + '\n';
+      htmlBody += '🏬 注册厂商: ' + escapeHtmlBackend(domain.registrar) + '\n';
     }
     if (domain.registeredAccount) {
-      message += '👤 注册账号: ' + escapeHtmlBackend(domain.registeredAccount) + '\n';
+      textBody += '👤 注册账号: ' + domain.registeredAccount + '\n';
+      htmlBody += '👤 注册账号: ' + escapeHtmlBackend(domain.registeredAccount) + '\n';
     }
-    message += '📅 原到期日期: ' + formatDate(domain.oldExpiryDate) + '\n';
-    message += '📅 新到期日期: ' + formatDate(domain.newExpiryDate) + '\n';
-    message += '📈 变化天数: ' + (domain.addedDays >= 0 ? '+' : '') + domain.addedDays + ' 天\n';
+    textBody += '📅 原到期日期: ' + formatDate(domain.oldExpiryDate) + '\n';
+    textBody += '📅 新到期日期: ' + formatDate(domain.newExpiryDate) + '\n';
+    textBody += '📈 变化天数: ' + (domain.addedDays >= 0 ? '+' : '') + domain.addedDays + ' 天\n';
+    htmlBody += '📅 原到期日期: ' + formatDate(domain.oldExpiryDate) + '\n';
+    htmlBody += '📅 新到期日期: ' + formatDate(domain.newExpiryDate) + '\n';
+    htmlBody += '📈 变化天数: ' + (domain.addedDays >= 0 ? '+' : '') + domain.addedDays + ' 天\n';
     if (domain.renewalDetected && (domain.syncedAt || domain.lastRenewed)) {
-      message += '🕐 续费检测时间: ' + formatDateTime(domain.syncedAt || domain.lastRenewed) + '\n';
+      const t = formatDateTime(domain.syncedAt || domain.lastRenewed);
+      textBody += '🕐 续费检测时间: ' + t + '\n';
+      htmlBody += '🕐 续费检测时间: ' + t + '\n';
     } else if (domain.syncedAt) {
-      message += '🕐 同步时间: ' + formatDateTime(domain.syncedAt) + '\n';
+      const t = formatDateTime(domain.syncedAt);
+      textBody += '🕐 同步时间: ' + t + '\n';
+      htmlBody += '🕐 同步时间: ' + t + '\n';
     }
   });
-  
-  return await sendTelegramMessage(config, message);
+
+  return await sendNotifyAll(config, sendTelegramMessage, {
+    title: plainTitle,
+    body: textBody.trim(),
+    html: htmlTitle + '\n' + separator + '\n\n' + htmlBody.trim(),
+  });
 }
 
 
