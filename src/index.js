@@ -3391,7 +3391,7 @@ const getHTMLContent = (title) => `
                                 <option value="">选择分类</option>
                                 <!-- 分类选项将通过JavaScript动态生成 -->
                             </select>
-                            <small class="form-text">不选择将放入默认分类</small>
+                            <small class="form-text">WHOIS 查询或保存时，将按注册厂商自动创建/选中同名分类（手动改选后不再自动覆盖）</small>
                         </div>
                         <!-- 添加自定义备注字段 -->
                         <div class="mb-3">
@@ -3984,6 +3984,10 @@ const getHTMLContent = (title) => `
                 calculateExpiryDate();
             });
             
+            document.getElementById('domainCategory').addEventListener('change', function() {
+                categoryManuallyChanged = true;
+            });
+
             document.getElementById('domainName').addEventListener('input', updateRenewLinkHint);
 
             // WHOIS自动查询按钮
@@ -5416,7 +5420,7 @@ const getHTMLContent = (title) => `
             const registrationDate = document.getElementById('registrationDate').value;
             const registrar = document.getElementById('registrar').value;
             const registeredAccount = document.getElementById('registeredAccount').value;
-            const categoryId = document.getElementById('domainCategory').value || 'default';
+            let categoryId = document.getElementById('domainCategory').value || 'default';
             const customNote = document.getElementById('customNote').value;
             const noteColor = document.getElementById('noteColor').value;
             const renewLink = document.getElementById('renewLink').value;
@@ -5441,6 +5445,11 @@ const getHTMLContent = (title) => `
             if (!name || !registrationDate || !expiryDate) {
                 showAlert('danger', '域名、注册时间和到期日期为必填项');
                 return;
+            }
+
+            if (registrar.trim() && !categoryManuallyChanged) {
+                const autoCategoryId = await ensureCategoryForRegistrar(registrar.trim());
+                if (autoCategoryId) categoryId = autoCategoryId;
             }
             
             // 确保通知设置字段存在且正确
@@ -5547,6 +5556,8 @@ const getHTMLContent = (title) => `
                 function editDomain(id) {
                     const domain = domains.find(d => d.id === id);
                     if (!domain) return;
+
+                    categoryManuallyChanged = false;
                     
                     document.getElementById('domainId').value = domain.id;
                     document.getElementById('domainName').value = domain.name;
@@ -5722,6 +5733,8 @@ const getHTMLContent = (title) => `
                     document.getElementById('registrationDate').value = '';
                     document.getElementById('registrar').value = '';
                     document.getElementById('registeredAccount').value = '';
+                    updateCategorySelect(categories, 'default');
+                    categoryManuallyChanged = false;
                     document.getElementById('customNote').value = '';
                     document.getElementById('noteColor').value = 'tag-blue'; // 重置为默认蓝色
                     document.getElementById('renewLink').value = '';
@@ -5775,6 +5788,49 @@ const getHTMLContent = (title) => `
                 
                 // 全局变量存储分类数据
                 let categories = [];
+                let categoryManuallyChanged = false;
+
+                // 按注册厂商确保分类存在并选中（不存在则自动创建）
+                async function ensureCategoryForRegistrar(registrarName) {
+                    const name = (registrarName || '').trim();
+                    if (!name) return null;
+
+                    if (!categories || categories.length === 0) {
+                        await loadCategories();
+                    }
+
+                    let cat = categories.find((c) => !c.isDefault && c.name === name);
+                    if (!cat) {
+                        try {
+                            const response = await fetch('/api/categories', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ name, description: '按注册厂商自动创建' }),
+                            });
+                            if (response.ok) {
+                                cat = await response.json();
+                                categories.push(cat);
+                            } else {
+                                const error = await response.json().catch(() => ({}));
+                                if (error.error && String(error.error).includes('已存在')) {
+                                    await loadCategories();
+                                    cat = categories.find((c) => !c.isDefault && c.name === name);
+                                } else {
+                                    return null;
+                                }
+                            }
+                        } catch (error) {
+                            return null;
+                        }
+                    }
+
+                    if (cat) {
+                        updateCategorySelect(categories, cat.id);
+                        categoryManuallyChanged = false;
+                        return cat.id;
+                    }
+                    return null;
+                }
                 
                 // 加载分类数据
                 async function loadCategories() {
@@ -6169,7 +6225,7 @@ const getHTMLContent = (title) => `
                                 return; // 直接结束，不填充表单
                             }
                             // 查询成功，填充表单数据
-                            const fillResult = fillFormWithWhoisData(result);
+                            const fillResult = await fillFormWithWhoisData(result);
                             if (fillResult) {
                                 showWhoisStatus('域名信息查询成功，已自动填充相关字段', 'success');
                             }
@@ -6198,7 +6254,7 @@ const getHTMLContent = (title) => `
                 }
                 
                 // 使用WHOIS数据填充表单
-                function fillFormWithWhoisData(whoisData) {
+                async function fillFormWithWhoisData(whoisData) {
                     let filledFields = []; // 记录成功填充的字段
                     let missingFields = []; // 记录缺失的字段
                     
@@ -6230,6 +6286,10 @@ const getHTMLContent = (title) => `
                         registrarField.value = registrarName;
                         registrarField.classList.add('auto-filled');
                         filledFields.push('注册商');
+                        const categoryId = await ensureCategoryForRegistrar(registrarName);
+                        if (categoryId) {
+                            filledFields.push('分类');
+                        }
                     } else {
                         missingFields.push('注册商');
                     }
