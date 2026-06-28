@@ -131,14 +131,23 @@ const RENEW_LINK_BUILTIN_DEFAULTS = {
   nicUa: 'https://nic.ua/en/my/domains',
   gname: 'https://www.gname.com/tld-eu-cc.html#registered',
   digitalPlat: 'https://dash.domain.digitalplat.org/panel/main?page=%2Fpanel%2Fdomains',
+  stackryze: 'https://domain.stackryze.com/my-domains',
 };
 
-// 到期前多少天内才开放续费；0 表示不限制。Gname eu.cc 免费续费需在到期 90 天内。
+// 到期前多少天内才开放续费；0 表示不限制。Gname eu.cc 免费续费需在到期 90 天内；Stackryze 为 60 天。
 const RENEW_WINDOW_BUILTIN_DEFAULTS = {
   nicUa: 0,
   gname: 90,
   digitalPlat: 0,
+  stackryze: 60,
 };
+
+const STACKRYZE_SUFFIXES = ['.indevs.in', '.sryze.cc', '.ryzedns.org', '.nx.kg'];
+
+export function isStackryzeDomain(domainName) {
+  const lower = (domainName || '').toLowerCase();
+  return STACKRYZE_SUFFIXES.some((suffix) => lower.endsWith(suffix));
+}
 
 export function getRenewLinkProviderId(domainName) {
   const lower = (domainName || '').toLowerCase();
@@ -146,6 +155,7 @@ export function getRenewLinkProviderId(domainName) {
   if (lower.endsWith('.eu.cc')) return 'gname';
   if (lower.endsWith('.qzz.io') || lower.endsWith('.dpdns.org') ||
       lower.endsWith('.us.kg') || lower.endsWith('.xx.kg')) return 'digitalPlat';
+  if (isStackryzeDomain(lower)) return 'stackryze';
   return null;
 }
 
@@ -607,6 +617,10 @@ function getWhoisQueryFunction(domainName) {
       lowerDomain.endsWith('.us.kg') || lowerDomain.endsWith('.xx.kg')) {
     return queryDigitalPlatWhois;
   }
+  // Stackryze 托管子域名（indevs.in / sryze.cc / ryzedns.org / nx.kg）
+  if (isStackryzeDomain(lowerDomain)) {
+    return queryStackryzeWhois;
+  }
   // 一级域名：RDAP 查询（免费无 Key），所有 gTLD 均可查
   if (dotCount === 1) {
     return queryFirstLevelDomain;
@@ -890,6 +904,66 @@ async function queryGenericRdap(domain, rdapBase) {
     };
   } finally {
     clearTimeout(timeoutId);
+  }
+}
+
+// Stackryze 托管子域名查询（api-domains.stackryze.com）
+async function queryStackryzeWhois(domain) {
+  try {
+    const url = `https://api-domains.stackryze.com/subdomains/whois?query=${encodeURIComponent(domain)}`;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
+    let response;
+    try {
+      response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'accept': '*/*',
+          'origin': 'https://domain.stackryze.com',
+          'referer': 'https://domain.stackryze.com/',
+        },
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeoutId);
+    }
+
+    const data = await response.json();
+
+    if (response.status === 404 || data.error) {
+      return {
+        success: true,
+        domain: domain,
+        registered: false,
+        raw: data,
+      };
+    }
+
+    if (!response.ok) {
+      throw new Error(data.error || `Stackryze WHOIS查询失败: ${response.status}`);
+    }
+
+    return {
+      success: true,
+      domain: domain,
+      registered: !!data.createdAt,
+      registrationDate: data.createdAt ? formatDate(data.createdAt) : null,
+      expiryDate: data.expiresAt ? formatDate(data.expiresAt) : null,
+      lastUpdated: data.updatedAt ? formatDate(data.updatedAt) : null,
+      registrar: data.registrar || 'Stackryze Domains',
+      registrarUrl: data.registrarUrl || 'https://domain.stackryze.com',
+      nameservers: data.nameservers || [],
+      status: data.domainStatus ? [data.domainStatus] : [],
+      dnssec: data.dnssec || null,
+      raw: data,
+    };
+  } catch (error) {
+    const msg = error.name === 'AbortError' ? 'Stackryze WHOIS查询超时（15秒）' : error.message;
+    return {
+      success: false,
+      error: msg,
+      domain: domain,
+    };
   }
 }
 
@@ -3537,21 +3611,29 @@ const getHTMLContent = (title) => `
                             <label for="defaultRenewLinkDigitalPlat" class="form-label">DigitalPlat <small class="text-muted">(qzz.io / dpdns.org / us.kg / xx.kg)</small></label>
                             <input type="url" class="form-control" id="defaultRenewLinkDigitalPlat" placeholder="https://dash.domain.digitalplat.org/panel/main?page=%2Fpanel%2Fdomains">
                         </div>
+                        <div class="mb-3">
+                            <label for="defaultRenewLinkStackryze" class="form-label">Stackryze <small class="text-muted">(indevs.in / sryze.cc / ryzedns.org / nx.kg)</small></label>
+                            <input type="url" class="form-control" id="defaultRenewLinkStackryze" placeholder="https://domain.stackryze.com/my-domains">
+                        </div>
 
                         <h6 class="mb-2 mt-2" style="font-size: 0.95rem;">续费开放窗口</h6>
-                        <p class="form-text mb-3">部分服务商仅允许在到期前 N 天内续费（如 Gname eu.cc 免费续费需 90 天内）。填 <strong>0</strong> 表示不限制；域名自定义续费链接不受此限制。</p>
-                        <div class="row g-2 mb-3">
-                            <div class="col-md-4">
+                        <p class="form-text mb-3">部分服务商仅允许在到期前 N 天内续费（如 Gname eu.cc 免费续费需 90 天内，Stackryze 为 60 天）。填 <strong>0</strong> 表示不限制；域名自定义续费链接不受此限制。</p>
+                        <div class="row g-2 mb-2">
+                            <div class="col-md-3">
                                 <label for="renewWindowNicUa" class="form-label">NIC.UA <small class="text-muted">(天)</small></label>
                                 <input type="number" class="form-control" id="renewWindowNicUa" min="0" max="3650" placeholder="0">
                             </div>
-                            <div class="col-md-4">
+                            <div class="col-md-3">
                                 <label for="renewWindowGname" class="form-label">Gname <small class="text-muted">(天)</small></label>
                                 <input type="number" class="form-control" id="renewWindowGname" min="0" max="3650" placeholder="90">
                             </div>
-                            <div class="col-md-4">
+                            <div class="col-md-3">
                                 <label for="renewWindowDigitalPlat" class="form-label">DigitalPlat <small class="text-muted">(天)</small></label>
                                 <input type="number" class="form-control" id="renewWindowDigitalPlat" min="0" max="3650" placeholder="0">
+                            </div>
+                            <div class="col-md-3">
+                                <label for="renewWindowStackryze" class="form-label">Stackryze <small class="text-muted">(天)</small></label>
+                                <input type="number" class="form-control" id="renewWindowStackryze" min="0" max="3650" placeholder="60">
                             </div>
                         </div>
                         
@@ -3929,8 +4011,9 @@ const getHTMLContent = (title) => `
                 const isPpUa = lowerDomain.endsWith('.pp.ua');
                 const isEuCc = lowerDomain.endsWith('.eu.cc');
                 const isDigitalPlat = lowerDomain.endsWith('.qzz.io') || lowerDomain.endsWith('.dpdns.org') || lowerDomain.endsWith('.us.kg') || lowerDomain.endsWith('.xx.kg');
+                const isStackryze = lowerDomain.endsWith('.indevs.in') || lowerDomain.endsWith('.sryze.cc') || lowerDomain.endsWith('.ryzedns.org') || lowerDomain.endsWith('.nx.kg');
 
-                if (dotCount !== 1 && !((isPpUa || isEuCc || isDigitalPlat) && dotCount === 2)) {
+                if (dotCount !== 1 && !((isPpUa || isEuCc || isDigitalPlat || isStackryze) && dotCount === 2)) {
                     if (dotCount === 0) {
                         showWhoisStatus('请输入完整的域名（如：example.com）', 'danger');
                     } else {
@@ -4473,11 +4556,13 @@ const getHTMLContent = (title) => `
                 document.getElementById('defaultRenewLinkNicUa').value = renewLinks.nicUa || '';
                 document.getElementById('defaultRenewLinkGname').value = renewLinks.gname || '';
                 document.getElementById('defaultRenewLinkDigitalPlat').value = renewLinks.digitalPlat || '';
+                document.getElementById('defaultRenewLinkStackryze').value = renewLinks.stackryze || '';
 
                 const renewWindows = telegramConfig.renewWindowDays || {};
                 document.getElementById('renewWindowNicUa').value = renewWindows.nicUa ?? 0;
                 document.getElementById('renewWindowGname').value = renewWindows.gname ?? 90;
                 document.getElementById('renewWindowDigitalPlat').value = renewWindows.digitalPlat ?? 0;
+                document.getElementById('renewWindowStackryze').value = renewWindows.stackryze ?? 60;
             } catch (error) {
                 // 忽略Telegram配置加载失败
             }
@@ -4497,11 +4582,13 @@ const getHTMLContent = (title) => `
                 nicUa: document.getElementById('defaultRenewLinkNicUa').value.trim(),
                 gname: document.getElementById('defaultRenewLinkGname').value.trim(),
                 digitalPlat: document.getElementById('defaultRenewLinkDigitalPlat').value.trim(),
+                stackryze: document.getElementById('defaultRenewLinkStackryze').value.trim(),
             };
             const renewWindowDays = {
                 nicUa: document.getElementById('renewWindowNicUa').value,
                 gname: document.getElementById('renewWindowGname').value,
                 digitalPlat: document.getElementById('renewWindowDigitalPlat').value,
+                stackryze: document.getElementById('renewWindowStackryze').value,
             };
             
             try {
@@ -4578,7 +4665,13 @@ const getHTMLContent = (title) => `
         }
         
         // 渲染域名列表
-        // keep in sync: getEffectiveRenewLink / getRenewLinkProviderId / isRenewLinkAvailable (backend exports)
+        // keep in sync: getEffectiveRenewLink / getRenewLinkProviderId / isRenewLinkAvailable / isStackryzeDomain (backend exports)
+        function isStackryzeDomainFrontend(name) {
+            const lower = (name || '').toLowerCase();
+            return lower.endsWith('.indevs.in') || lower.endsWith('.sryze.cc') ||
+                lower.endsWith('.ryzedns.org') || lower.endsWith('.nx.kg');
+        }
+
         function getEffectiveRenewLinkFrontend(domain) {
             if (!domain) return '';
             const custom = domain.renewLink != null ? String(domain.renewLink).trim() : '';
@@ -4592,6 +4685,7 @@ const getHTMLContent = (title) => `
             if (name.endsWith('.eu.cc')) return links.gname || '';
             if (name.endsWith('.qzz.io') || name.endsWith('.dpdns.org') ||
                 name.endsWith('.us.kg') || name.endsWith('.xx.kg')) return links.digitalPlat || '';
+            if (isStackryzeDomainFrontend(name)) return links.stackryze || '';
             return '';
         }
 
@@ -4608,6 +4702,7 @@ const getHTMLContent = (title) => `
             else if (name.endsWith('.eu.cc')) providerId = 'gname';
             else if (name.endsWith('.qzz.io') || name.endsWith('.dpdns.org') ||
                      name.endsWith('.us.kg') || name.endsWith('.xx.kg')) providerId = 'digitalPlat';
+            else if (isStackryzeDomainFrontend(name)) providerId = 'stackryze';
             if (!providerId) {
                 return { available: true, daysLeft, windowDays: 0 };
             }
@@ -4633,6 +4728,7 @@ const getHTMLContent = (title) => `
             else if (name.endsWith('.eu.cc')) { defaultLink = links.gname || ''; providerId = 'gname'; }
             else if (name.endsWith('.qzz.io') || name.endsWith('.dpdns.org') ||
                      name.endsWith('.us.kg') || name.endsWith('.xx.kg')) { defaultLink = links.digitalPlat || ''; providerId = 'digitalPlat'; }
+            else if (isStackryzeDomainFrontend(name)) { defaultLink = links.stackryze || ''; providerId = 'stackryze'; }
             const hint = document.getElementById('renewLinkHint');
             const field = document.getElementById('renewLink');
             let hintText = '域名续费的直达链接；留空则按服务商使用系统设置中的默认链接';
@@ -6125,6 +6221,8 @@ const getHTMLContent = (title) => `
                         registrarName = 'Gname.com';
                     } else if (domainName.endsWith('.qzz.io') || domainName.endsWith('.dpdns.org') || domainName.endsWith('.us.kg') || domainName.endsWith('.xx.kg')) {
                         registrarName = 'DigitalPlat.org';
+                    } else if (isStackryzeDomainFrontend(domainName)) {
+                        registrarName = 'Stackryze Domains';
                     }
 
                     if (registrarName) {
@@ -6686,8 +6784,9 @@ async function handleApiRequest(request) {
       const isPpUa = lowerDomain.endsWith('.pp.ua');
       const isEuCc = lowerDomain.endsWith('.eu.cc');
       const isDigitalPlat = lowerDomain.endsWith('.qzz.io') || lowerDomain.endsWith('.dpdns.org') || lowerDomain.endsWith('.us.kg') || lowerDomain.endsWith('.xx.kg');
+      const isStackryze = isStackryzeDomain(lowerDomain);
 
-      if (dotCount !== 1 && !((isPpUa || isEuCc || isDigitalPlat) && dotCount === 2)) {
+      if (dotCount !== 1 && !((isPpUa || isEuCc || isDigitalPlat || isStackryze) && dotCount === 2)) {
         if (dotCount === 0) {
           return jsonResponse({ error: '请输入完整的域名（如：example.com）' }, 400);
         } else {
@@ -6705,6 +6804,8 @@ async function handleApiRequest(request) {
       } else if (isDigitalPlat) {
         // 使用 DigitalPlat 接口查询特定二级域名
         result = await queryDigitalPlatWhois(domain);
+      } else if (isStackryze) {
+        result = await queryStackryzeWhois(domain);
       } else {
         // 一级域名：RDAP 查询（免费无 Key）
         result = await queryFirstLevelDomain(domain);
