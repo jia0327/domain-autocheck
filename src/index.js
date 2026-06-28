@@ -3271,18 +3271,19 @@ const getHTMLContent = (title) => `
                         <hr>
                         <h6 class="mb-3" style="display: flex; align-items: center; gap: 5px;"><i class="iconfont icon-paper-plane" style="color: white;"></i> 通知设置</h6>
                         <div class="mb-3 form-check">
-                            <input type="checkbox" class="form-check-input" id="useGlobalSettings" checked>
-                            <label class="form-check-label" for="useGlobalSettings">使用全局通知设置</label>
+                            <input type="checkbox" class="form-check-input" id="notifyEnabled" checked>
+                            <label class="form-check-label" for="notifyEnabled">启用到期通知</label>
+                            <div class="form-text">关闭后该域名不会收到到期提醒</div>
                         </div>
-                        <div id="domainNotifySettings" style="display: none;">
-                            <div class="mb-3 form-check">
-                                <input type="checkbox" class="form-check-input" id="notifyEnabled" checked>
-                                <label class="form-check-label" for="notifyEnabled">启用到期通知</label>
-                            </div>
-                            <div class="mb-3">
-                                <label for="domainNotifyDays" class="form-label"><i class="iconfont icon-lingdang"></i> 提前通知天数</label>
-                                <input type="number" class="form-control" id="domainNotifyDays" min="1" max="90" value="30">
-                            </div>
+                        <div class="mb-3 form-check">
+                            <input type="checkbox" class="form-check-input" id="useGlobalSettings" checked>
+                            <label class="form-check-label" for="useGlobalSettings">使用全局提前通知天数</label>
+                            <div class="form-text">关闭后可为此域名单独设置提前天数</div>
+                        </div>
+                        <div class="mb-3">
+                            <label for="domainNotifyDays" class="form-label"><i class="iconfont icon-lingdang"></i> 提前通知天数</label>
+                            <input type="number" class="form-control" id="domainNotifyDays" min="1" max="90" value="30">
+                            <div class="form-text" id="domainNotifyDaysHint">域名到期前多少天开始发送通知</div>
                         </div>
                     </form>
                 </div>
@@ -3804,9 +3805,25 @@ const getHTMLContent = (title) => `
             document.getElementById('testTelegramBtn').addEventListener('click', testTelegram);
             
             // 域名通知设置 - 全局/自定义切换
-            document.getElementById('useGlobalSettings').addEventListener('change', function() {
-                document.getElementById('domainNotifySettings').style.display = this.checked ? 'none' : 'block';
-            });
+            document.getElementById('useGlobalSettings').addEventListener('change', updateDomainNotifyDaysUI);
+            
+            // 更新域名表单中的提前通知天数显示状态
+            function updateDomainNotifyDaysUI() {
+                const useGlobal = document.getElementById('useGlobalSettings').checked;
+                const daysInput = document.getElementById('domainNotifyDays');
+                const hint = document.getElementById('domainNotifyDaysHint');
+                const globalDays = telegramConfig.notifyDays || 30;
+                if (useGlobal) {
+                    daysInput.value = globalDays;
+                    daysInput.readOnly = true;
+                    daysInput.classList.add('bg-light');
+                    hint.textContent = '当前跟随系统全局设置（' + globalDays + ' 天），可在右上角「系统设置 → Telegram通知设置」中修改';
+                } else {
+                    daysInput.readOnly = false;
+                    daysInput.classList.remove('bg-light');
+                    hint.textContent = '域名到期前多少天开始发送通知（仅对此域名生效）';
+                }
+            }
             
             // 窗口大小变化监听器 - 用于移动端排序修复
             let resizeTimer;
@@ -3871,6 +3888,7 @@ const getHTMLContent = (title) => `
             // 当模态框显示时初始化预览
             document.getElementById('addDomainModal').addEventListener('shown.bs.modal', function() {
                 updateNotePreview();
+                updateDomainNotifyDaysUI();
             });
             
             // 排序选项点击事件
@@ -4209,8 +4227,7 @@ const getHTMLContent = (title) => `
                 document.getElementById('telegramEnabled').checked = telegramConfig.enabled;
                 document.getElementById('telegramSettings').style.display = telegramConfig.enabled ? 'block' : 'none';
                 document.getElementById('notifyDays').value = telegramConfig.notifyDays || 30;
-
-                // 如果配置了默认展开域名，且当前不在"全部展开"模式
+                updateDomainNotifyDaysUI();
                 if (telegramConfig.expandDomains && viewMode !== 'expand-all') {
                     // 设置视图模式
                     viewMode = 'expand-all';
@@ -5213,8 +5230,10 @@ const getHTMLContent = (title) => `
                     const notifySettings = domain.notifySettings || { useGlobalSettings: true, enabled: true, notifyDays: 30 };
                     document.getElementById('useGlobalSettings').checked = notifySettings.useGlobalSettings;
                     document.getElementById('notifyEnabled').checked = notifySettings.enabled;
-                    document.getElementById('domainNotifyDays').value = notifySettings.notifyDays || 30;
-                    document.getElementById('domainNotifySettings').style.display = notifySettings.useGlobalSettings ? 'none' : 'block';
+                    if (!notifySettings.useGlobalSettings) {
+                        document.getElementById('domainNotifyDays').value = notifySettings.notifyDays || 30;
+                    }
+                    updateDomainNotifyDaysUI();
                     
                     document.querySelector('#addDomainModal .modal-title').textContent = '编辑域名';
                     const modal = new bootstrap.Modal(document.getElementById('addDomainModal'));
@@ -5351,7 +5370,7 @@ const getHTMLContent = (title) => `
                     document.getElementById('useGlobalSettings').checked = true;
                     document.getElementById('notifyEnabled').checked = true;
                     document.getElementById('domainNotifyDays').value = '30';
-                    document.getElementById('domainNotifySettings').style.display = 'none';
+                    updateDomainNotifyDaysUI();
                     
                     // 重置到期日期字段状态（添加新域名时保持可编辑）
                     document.getElementById('expiryDate').removeAttribute('readonly');
