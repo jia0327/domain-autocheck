@@ -4,6 +4,7 @@ import {
   getRenewLinkProviderId,
   resolveRenewWindowDays,
   resolveDefaultRenewLinks,
+  parseDnsheApiJsonBody,
 } from '../src/index.js';
 
 describe('isDnsheDomain', () => {
@@ -36,5 +37,20 @@ describe('DNSHE provider defaults', () => {
   it('defaults renew link to DNSHE Domain Hub', () => {
     const links = resolveDefaultRenewLinks(null);
     expect(links.dnshe).toBe('https://my.dnshe.com/index.php?m=domain_hub');
+  });
+});
+
+describe('parseDnsheApiJsonBody', () => {
+  it('detects HTML error pages', () => {
+    const parsed = parseDnsheApiJsonBody('<!DOCTYPE html><html><body>Login</body></html>');
+    expect(parsed.ok).toBe(false);
+    expect(parsed.html).toBe(true);
+    expect(parsed.error).toContain('HTML');
+  });
+
+  it('parses valid JSON payloads', () => {
+    const parsed = parseDnsheApiJsonBody('{"success":true,"domain":"foo.cc.cd"}');
+    expect(parsed.ok).toBe(true);
+    expect(parsed.data.domain).toBe('foo.cc.cd');
   });
 });

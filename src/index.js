@@ -992,7 +992,59 @@ function getDnsheApiCredentials() {
   return { key, secret };
 }
 
-// DNSHE 托管子域名 WHOIS（my.dnshe.com，需配置 DNSHE_API_KEY / DNSHE_API_SECRET）
+// 解析 DNSHE API 响应体；HTML 常见于 my.dnshe.com 对非浏览器/非白名单 IP 的拦截
+export function parseDnsheApiJsonBody(text) {
+  const trimmed = String(text || '').trim();
+  if (!trimmed) {
+    return { ok: false, error: 'DNSHE API 返回空响应' };
+  }
+  if (/^<!DOCTYPE/i.test(trimmed) || /^<html/i.test(trimmed)) {
+    return {
+      ok: false,
+      error: 'DNSHE API 返回了 HTML 页面而非 JSON。请检查 DNSHE_API_KEY / DNSHE_API_SECRET 是否正确；若 Key 启用了 IP 白名单，需放行 Cloudflare Workers 出口 IP，或清空白名单。',
+      html: true,
+    };
+  }
+  try {
+    return { ok: true, data: JSON.parse(trimmed) };
+  } catch (error) {
+    return { ok: false, error: `DNSHE API 响应非 JSON: ${error.message}` };
+  }
+}
+
+function mapDnsheWhoisPayload(domain, result) {
+  const data = result.data && typeof result.data === 'object' ? result.data : result;
+  const registered = data.registered !== false &&
+    String(data.status || '').toLowerCase() !== 'unregistered';
+  if (!registered) {
+    return { success: true, domain: domain, registered: false, raw: result };
+  }
+
+  const createdAt = data.created_at || data.registered_at;
+  const expiresAt = data.expires_at;
+  const nameservers = data.name_servers || data.nameservers || [];
+
+  return {
+    success: true,
+    domain: domain,
+    registered: true,
+    registrationDate: createdAt ? formatDate(createdAt) : null,
+    expiryDate: expiresAt ? formatDate(expiresAt) : null,
+    registrar: data.registrar || 'DNSHE',
+    registrarUrl: data.registrar_url || 'https://www.dnshe.com',
+    nameservers: nameservers,
+    status: data.status ? [data.status] : [],
+    dnssec: data.dnssec || null,
+    raw: result,
+  };
+}
+
+function dnsheAuthErrorMessage(result) {
+  const msg = result.message || result.error || 'DNSHE API 鉴权失败';
+  return `${msg}。请检查 DNSHE_API_KEY / DNSHE_API_SECRET，并确认 API Key 未设置阻断 Cloudflare 的 IP 白名单`;
+}
+
+// DNSHE 托管子域名 WHOIS（api005.dnshe.com 优先，my.dnshe.com 兜底）
 async function queryDnsheWhois(domain) {
   const { key, secret } = getDnsheApiCredentials();
   if (!key || !secret) {
@@ -1003,58 +1055,77 @@ async function queryDnsheWhois(domain) {
     };
   }
 
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000);
-    let response;
-    try {
-      response = await fetch('https://my.dnshe.com/index.php?m=domain_hub&module_action=ajax_whois_lookup', {
+  const authHeaders = {
+    'accept': 'application/json',
+    'X-API-Key': key,
+    'X-API-Secret': secret,
+  };
+  const attempts = [
+    {
+      label: 'api005',
+      url: `https://api005.dnshe.com/index.php?m=domain_hub&endpoint=whois&domain=${encodeURIComponent(domain)}`,
+      init: { method: 'GET', headers: authHeaders },
+    },
+    {
+      label: 'my.dnshe.com',
+      url: 'https://my.dnshe.com/index.php?m=domain_hub&module_action=ajax_whois_lookup',
+      init: {
         method: 'POST',
         headers: {
-          'accept': 'application/json',
+          ...authHeaders,
           'content-type': 'application/json',
           'origin': 'https://my.dnshe.com',
           'referer': 'https://my.dnshe.com/index.php?m=domain_hub&view=whois',
-          'X-API-Key': key,
-          'X-API-Secret': secret,
         },
         body: JSON.stringify({ domain }),
-        signal: controller.signal,
-      });
+      },
+    },
+  ];
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
+    let lastError = 'DNSHE WHOIS查询失败';
+    let sawHtml = false;
+
+    try {
+      for (const attempt of attempts) {
+        let response;
+        try {
+          response = await fetch(attempt.url, { ...attempt.init, signal: controller.signal });
+        } catch (error) {
+          if (error.name === 'AbortError') throw error;
+          lastError = `${attempt.label} 请求失败: ${error.message}`;
+          continue;
+        }
+
+        const text = await response.text();
+        const parsed = parseDnsheApiJsonBody(text);
+        if (!parsed.ok) {
+          lastError = parsed.error;
+          if (parsed.html) sawHtml = true;
+          continue;
+        }
+
+        const result = parsed.data;
+        if (result.error_code === 'auth_invalid_credentials' || result.auth_required) {
+          return { success: false, error: dnsheAuthErrorMessage(result), domain: domain };
+        }
+        if (!response.ok || result.success === false) {
+          lastError = result.message || result.error || `DNSHE WHOIS查询失败: ${response.status}`;
+          continue;
+        }
+
+        return mapDnsheWhoisPayload(domain, result);
+      }
     } finally {
       clearTimeout(timeoutId);
     }
 
-    const result = await response.json();
-    if (!response.ok || !result.success) {
-      const msg = result.error || result.message || `DNSHE WHOIS查询失败: ${response.status}`;
-      return { success: false, error: msg, domain: domain };
+    if (sawHtml) {
+      return { success: false, error: lastError, domain: domain };
     }
-
-    const data = result.data || result;
-    const registered = data.registered !== false &&
-      String(data.status || '').toLowerCase() !== 'unregistered';
-    if (!registered) {
-      return { success: true, domain: domain, registered: false, raw: result };
-    }
-
-    const createdAt = data.created_at || data.registered_at;
-    const expiresAt = data.expires_at;
-    const nameservers = data.name_servers || data.nameservers || [];
-
-    return {
-      success: true,
-      domain: domain,
-      registered: true,
-      registrationDate: createdAt ? formatDate(createdAt) : null,
-      expiryDate: expiresAt ? formatDate(expiresAt) : null,
-      registrar: data.registrar || 'DNSHE',
-      registrarUrl: data.registrar_url || 'https://www.dnshe.com',
-      nameservers: nameservers,
-      status: data.status ? [data.status] : [],
-      dnssec: data.dnssec || null,
-      raw: result,
-    };
+    return { success: false, error: lastError, domain: domain };
   } catch (error) {
     const msg = error.name === 'AbortError' ? 'DNSHE WHOIS查询超时（15秒）' : error.message;
     return { success: false, error: msg, domain: domain };
@@ -6331,7 +6402,13 @@ const getHTMLContent = (title) => `
                             signal: controller.signal
                         });
                         
-                        const result = await response.json();
+                        const responseText = await response.text();
+                        let result;
+                        try {
+                            result = JSON.parse(responseText);
+                        } catch (parseError) {
+                            throw new Error('服务器返回非 JSON 响应，请稍后重试或检查 Worker 是否已部署最新版本');
+                        }
                         
                         if (!response.ok) {
                             throw new Error(result.error || 'API请求失败');
