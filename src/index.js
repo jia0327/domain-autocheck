@@ -6014,6 +6014,16 @@ const getHTMLContent = (title) => `
                 return;
             }
 
+            const normalizedName = name.trim().toLowerCase();
+            const duplicateDomain = domains.find(function(d) {
+                if (domainId && d.id === domainId) return false;
+                return (d.name || '').trim().toLowerCase() === normalizedName;
+            });
+            if (duplicateDomain) {
+                showAlert('danger', '域名 ' + name.trim() + ' 已存在，请勿重复添加');
+                return;
+            }
+
             if (registrar.trim() && !categoryManuallyChanged) {
                 const autoCategoryId = await ensureCategoryForRegistrar(registrar.trim());
                 if (autoCategoryId) categoryId = autoCategoryId;
@@ -6071,7 +6081,8 @@ const getHTMLContent = (title) => `
                             });
                         }
                         
-                        if (!response.ok) throw new Error('保存域名失败');
+                        const result = await response.json().catch(function() { return {}; });
+                        if (!response.ok) throw new Error(result.error || '保存域名失败');
                         
                         // 关闭模态框并重新加载域名列表
                         bootstrap.Modal.getInstance(document.getElementById('addDomainModal')).hide();
@@ -7266,7 +7277,7 @@ async function handleApiRequest(request) {
       const domain = await addDomain(domainData);
       return jsonResponse(domain, 201);
     } catch (error) {
-      return jsonResponse({ error: '添加域名失败' }, 400);
+      return jsonResponse({ error: error.message || '添加域名失败' }, 400);
     }
   }
   
@@ -7278,7 +7289,7 @@ async function handleApiRequest(request) {
       const domain = await updateDomain(id, domainData);
       return jsonResponse(domain);
     } catch (error) {
-      return jsonResponse({ error: '更新域名失败' }, 400);
+      return jsonResponse({ error: error.message || '更新域名失败' }, 400);
     }
   }
   
@@ -7620,6 +7631,28 @@ export function sanitizePrice(price) {
   return { value, currency, unit };
 }
 
+export function normalizeDomainName(name) {
+  return String(name || '').trim().toLowerCase();
+}
+
+export function findDomainByName(domains, name, excludeId = null) {
+  const normalized = normalizeDomainName(name);
+  if (!normalized) return null;
+  return domains.find((d) => {
+    if (excludeId && d.id === excludeId) return false;
+    return normalizeDomainName(d.name) === normalized;
+  }) || null;
+}
+
+function assertDomainNameAvailable(domains, name, excludeId = null) {
+  const trimmed = String(name || '').trim();
+  const duplicate = findDomainByName(domains, trimmed, excludeId);
+  if (duplicate) {
+    throw new Error(`域名 ${trimmed} 已存在，请勿重复添加`);
+  }
+  return trimmed;
+}
+
 // 添加新域名
 async function addDomain(domainData) {
   const domains = await getDomains();
@@ -7628,8 +7661,8 @@ async function addDomain(domainData) {
   if (!domainData.name || !domainData.registrationDate || !domainData.expiryDate) {
     throw new Error('域名、注册时间和到期日期为必填项');
   }
-  
-  // 生成唯一ID
+
+  domainData.name = assertDomainNameAvailable(domains, domainData.name);
   domainData.id = crypto.randomUUID();
 
   // 添加创建时间
@@ -7679,6 +7712,8 @@ async function updateDomain(id, domainData) {
   if (!domainData.name || !domainData.registrationDate || !domainData.expiryDate) {
     throw new Error('域名、注册时间和到期日期为必填项');
   }
+
+  domainData.name = assertDomainNameAvailable(domains, domainData.name, id);
   
   // 确保通知设置正确
   let notifySettings;
