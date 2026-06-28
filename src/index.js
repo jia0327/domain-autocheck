@@ -2104,6 +2104,7 @@ const getHTMLContent = (title) => `
             transform: none; /* 移除垂直居中变换 */
             z-index: 10; /* 提高z-index值确保在文本上方 */
             min-width: 90px; /* 再次增加最小宽度适应更大的圆圈 */
+            pointer-events: none; /* 不阻挡下方按钮点击 */
         }
         
         .progress-circle {
@@ -2649,6 +2650,8 @@ const getHTMLContent = (title) => `
             margin-bottom: 8px;
             flex-wrap: nowrap;
             width: 100%;
+            position: relative;
+            z-index: 20;
         }
         
         .domain-actions .btn,
@@ -3445,7 +3448,7 @@ const getHTMLContent = (title) => `
         <div class="modal-dialog">
             <div class="modal-content">
                 <div class="modal-header">
-                    <h5 class="modal-title">刷新检测到期时间</h5>
+                    <h5 class="modal-title">刷新到期时间</h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
                 <div class="modal-body">
@@ -3457,7 +3460,7 @@ const getHTMLContent = (title) => `
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal"><i class="iconfont icon-xmark"></i> 取消</button>
-                    <button type="button" class="btn btn-success" id="confirmSyncExpiryBtn"><i class="iconfont icon-arrows-rotate"></i> 开始检测</button>
+                    <button type="button" class="btn btn-success" id="confirmSyncExpiryBtn"><i class="iconfont icon-arrows-rotate"></i> 刷新</button>
                 </div>
             </div>
         </div>
@@ -3607,6 +3610,26 @@ const getHTMLContent = (title) => `
         
         // 全局变量用于存储当前查询的控制器
         let currentWhoisController = null;
+        
+        // 更新域名表单中的提前通知天数显示状态
+        function updateDomainNotifyDaysUI() {
+            const useGlobalEl = document.getElementById('useGlobalSettings');
+            const daysInput = document.getElementById('domainNotifyDays');
+            const hint = document.getElementById('domainNotifyDaysHint');
+            if (!useGlobalEl || !daysInput || !hint) return;
+            const useGlobal = useGlobalEl.checked;
+            const globalDays = telegramConfig.notifyDays || 30;
+            if (useGlobal) {
+                daysInput.value = globalDays;
+                daysInput.readOnly = true;
+                daysInput.classList.add('bg-light');
+                hint.textContent = '当前跟随系统全局设置（' + globalDays + ' 天），可在右上角「系统设置 → Telegram通知设置」中修改';
+            } else {
+                daysInput.readOnly = false;
+                daysInput.classList.remove('bg-light');
+                hint.textContent = '域名到期前多少天开始发送通知（仅对此域名生效）';
+            }
+        }
         
         // 设置事件监听器
         function setupEventListeners() {
@@ -3806,24 +3829,6 @@ const getHTMLContent = (title) => `
             
             // 域名通知设置 - 全局/自定义切换
             document.getElementById('useGlobalSettings').addEventListener('change', updateDomainNotifyDaysUI);
-            
-            // 更新域名表单中的提前通知天数显示状态
-            function updateDomainNotifyDaysUI() {
-                const useGlobal = document.getElementById('useGlobalSettings').checked;
-                const daysInput = document.getElementById('domainNotifyDays');
-                const hint = document.getElementById('domainNotifyDaysHint');
-                const globalDays = telegramConfig.notifyDays || 30;
-                if (useGlobal) {
-                    daysInput.value = globalDays;
-                    daysInput.readOnly = true;
-                    daysInput.classList.add('bg-light');
-                    hint.textContent = '当前跟随系统全局设置（' + globalDays + ' 天），可在右上角「系统设置 → Telegram通知设置」中修改';
-                } else {
-                    daysInput.readOnly = false;
-                    daysInput.classList.remove('bg-light');
-                    hint.textContent = '域名到期前多少天开始发送通知（仅对此域名生效）';
-                }
-            }
             
             // 窗口大小变化监听器 - 用于移动端排序修复
             let resizeTimer;
@@ -4873,8 +4878,8 @@ const getHTMLContent = (title) => `
                         '</div>' +
                         (infoHtml ? '<div class="domain-info mb-2">' + infoHtml + '</div>' : '') +
                         '<div class="domain-actions">' +
-                        '<button class="btn btn-sm btn-primary edit-domain" data-id="' + escapeHtml(domain.id) + '" title="编辑域名"><i class="iconfont icon-pencil"></i> 编辑</button>' +
-                        '<button class="btn btn-sm btn-success sync-expiry-domain" data-id="' + escapeHtml(domain.id) + '" data-name="' + escapeHtml(domain.name) + '" data-expiry="' + escapeHtml(domain.expiryDate) + '" title="刷新检测到期时间"><i class="iconfont icon-arrows-rotate"></i> 检测到期</button>' +
+                        '<button type="button" class="btn btn-sm btn-primary edit-domain" data-id="' + escapeHtml(domain.id) + '" title="编辑域名"><i class="iconfont icon-pencil"></i> 编辑</button>' +
+                        '<button type="button" class="btn btn-sm btn-success sync-expiry-domain" data-id="' + escapeHtml(domain.id) + '" data-name="' + escapeHtml(domain.name) + '" data-expiry="' + escapeHtml(domain.expiryDate) + '" title="刷新到期时间"><i class="iconfont icon-arrows-rotate"></i> 刷新</button>' +
                         renewLinkHtml +
                         '<button class="btn btn-sm btn-danger delete-domain" data-id="' + escapeHtml(domain.id) + '" data-name="' + escapeHtml(domain.name) + '" title="删除域名"><i class="iconfont icon-shanchu"></i> 删除</button>' +
                         '</div>' +
