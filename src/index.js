@@ -4634,6 +4634,23 @@ const getHTMLContent = (title) => `
             { value: 'dnshe', label: 'DNSHE (API)' },
             { value: 'rdap', label: '通用 RDAP（一级域名）' },
         ];
+        // keep in sync: VENDOR_BUILTIN_TEMPLATES (backend)
+        function getDefaultVendorTemplatesFrontend() {
+            return [
+                { id: 'nicUa', name: 'NIC.UA', websiteUrl: 'https://nic.ua', renewLink: 'https://nic.ua/en/my/domains', suffixes: ['.pp.ua'], renewWindowDays: 0, defaultNotifyDays: 30, whois: 'ppUa', auth: null, builtin: true },
+                { id: 'gname', name: 'Gname', websiteUrl: 'https://www.gname.com', renewLink: 'https://www.gname.com/tld-eu-cc.html#registered', suffixes: ['.eu.cc'], renewWindowDays: 90, defaultNotifyDays: 30, whois: 'euCc', auth: null, builtin: true },
+                { id: 'digitalPlat', name: 'DigitalPlat', websiteUrl: 'https://domain.digitalplat.org', renewLink: 'https://dash.domain.digitalplat.org/panel/main?page=%2Fpanel%2Fdomains', suffixes: ['.qzz.io', '.dpdns.org', '.us.kg', '.xx.kg'], renewWindowDays: 0, defaultNotifyDays: 30, whois: 'digitalPlat', auth: null, builtin: true },
+                { id: 'stackryze', name: 'Stackryze', websiteUrl: 'https://domain.stackryze.com', renewLink: 'https://domain.stackryze.com/my-domains', suffixes: ['.indevs.in', '.sryze.cc', '.ryzedns.org', '.nx.kg'], renewWindowDays: 60, defaultNotifyDays: 30, whois: 'stackryze', auth: null, builtin: true },
+                { id: 'dnshe', name: 'DNSHE', websiteUrl: 'https://www.dnshe.com', renewLink: 'https://my.dnshe.com/index.php?m=domain_hub', suffixes: ['.de5.net', '.us.ci', '.cc.cd', '.bot.cd', '.ccwu.cc', '.bbroot.com', '.bbroott.com', '.cn.mt', '.onlydev.cc', '.ddns.ge'], renewWindowDays: 180, defaultNotifyDays: 30, whois: 'dnshe', auth: { type: 'dnshe' }, builtin: true },
+            ];
+        }
+
+        function getResolvedVendorTemplatesForUi() {
+            if (telegramConfig.vendorTemplates && telegramConfig.vendorTemplates.length) {
+                return telegramConfig.vendorTemplates;
+            }
+            return getDefaultVendorTemplatesFrontend();
+        }
 
         // keep in sync: normalizeVendorSuffix / matchVendorTemplate (backend exports)
         function normalizeVendorSuffixFrontend(raw) {
@@ -4659,7 +4676,8 @@ const getHTMLContent = (title) => `
         }
 
         function getActiveVendorTemplates() {
-            return vendorTemplatesDraft.length ? vendorTemplatesDraft : (telegramConfig.vendorTemplates || []);
+            if (vendorTemplatesDraft.length) return vendorTemplatesDraft;
+            return getResolvedVendorTemplatesForUi();
         }
 
         function domainAllowedDotsFrontend(domainName, templates) {
@@ -4683,7 +4701,8 @@ const getHTMLContent = (title) => `
             const idx = vendorTemplatesDraft.findIndex(function(t) { return t.id === selectedVendorTemplateId; });
             if (idx === -1) return;
             const suffixRaw = (document.getElementById('vendorSuffixes') || {}).value || '';
-            const suffixes = suffixRaw.split(/[\n,;]+/).map(normalizeVendorSuffixFrontend).filter(function(s) {
+            // template literal 会吃掉反斜杠+n，正则字符类里须写成 \\n
+            const suffixes = suffixRaw.split(/[\\n,;]+/).map(normalizeVendorSuffixFrontend).filter(function(s) {
                 return s.length > 1;
             });
             const authType = (document.getElementById('vendorAuthType') || {}).value || '';
@@ -4731,9 +4750,9 @@ const getHTMLContent = (title) => `
                 '<div class="form-text">每行一个后缀，须以 . 开头</div></div>' +
                 '<div class="row g-2 mb-2">' +
                 '<div class="col-md-6"><label class="form-label">续费开放窗口 <small class="text-muted">(天，0=不限)</small></label>' +
-                '<input type="number" class="form-control" id="vendorRenewWindow" min="0" max="3650" value="' + escapeHtml(String(template.renewWindowDays ?? 0)) + '"></div>' +
+                '<input type="number" class="form-control" id="vendorRenewWindow" min="0" max="3650" value="' + escapeHtml(String(template.renewWindowDays != null ? template.renewWindowDays : 0)) + '"></div>' +
                 '<div class="col-md-6"><label class="form-label">默认提醒时间 <small class="text-muted">(天)</small></label>' +
-                '<input type="number" class="form-control" id="vendorDefaultNotifyDays" min="1" max="90" value="' + escapeHtml(String(template.defaultNotifyDays ?? 30)) + '"></div></div>' +
+                '<input type="number" class="form-control" id="vendorDefaultNotifyDays" min="1" max="90" value="' + escapeHtml(String(template.defaultNotifyDays != null ? template.defaultNotifyDays : 30)) + '"></div></div>' +
                 '<div class="mb-2"><label class="form-label">WHOIS 查询</label>' +
                 '<select class="form-select" id="vendorWhois"' + (isBuiltin ? ' disabled' : '') + '>' +
                 VENDOR_WHOIS_OPTIONS.map(function(opt) {
@@ -4780,15 +4799,18 @@ const getHTMLContent = (title) => `
         }
 
         function loadVendorTemplatesFromConfig(templates) {
-            vendorTemplatesDraft = (templates || []).map(function(t) {
+            if (!templates || !templates.length) {
+                templates = getResolvedVendorTemplatesForUi();
+            }
+            vendorTemplatesDraft = templates.map(function(t) {
                 return {
                     id: t.id,
                     name: t.name,
                     websiteUrl: t.websiteUrl || '',
                     renewLink: t.renewLink || '',
                     suffixes: Array.isArray(t.suffixes) ? t.suffixes.slice() : [],
-                    renewWindowDays: t.renewWindowDays ?? 0,
-                    defaultNotifyDays: t.defaultNotifyDays ?? 30,
+                    renewWindowDays: t.renewWindowDays != null ? t.renewWindowDays : 0,
+                    defaultNotifyDays: t.defaultNotifyDays != null ? t.defaultNotifyDays : 30,
                     whois: t.whois || '',
                     auth: t.auth ? Object.assign({}, t.auth) : null,
                     builtin: !!t.builtin,
@@ -4807,8 +4829,8 @@ const getHTMLContent = (title) => `
                     websiteUrl: t.websiteUrl || '',
                     renewLink: t.renewLink || '',
                     suffixes: t.suffixes || [],
-                    renewWindowDays: t.renewWindowDays ?? 0,
-                    defaultNotifyDays: t.defaultNotifyDays ?? 30,
+                    renewWindowDays: t.renewWindowDays != null ? t.renewWindowDays : 0,
+                    defaultNotifyDays: t.defaultNotifyDays != null ? t.defaultNotifyDays : 30,
                     whois: t.whois || '',
                 };
                 if (t.auth) out.auth = t.auth;
@@ -4926,11 +4948,8 @@ const getHTMLContent = (title) => `
             
             // 确保DOM元素已完全加载
             setTimeout(() => {
-                // 使用Promise.all并行加载数据
-                Promise.all([loadDomains(), loadCategories(), loadTelegramConfig()])
-                    .then(() => {
-                        renderDomainList();
-                    })
+                Promise.all([loadDomains(), loadTelegramConfig()])
+                    .then(() => renderDomainList())
                     .catch(error => showAlert('danger', '数据加载失败: ' + error.message));
             }, 300);
             
@@ -5157,6 +5176,14 @@ const getHTMLContent = (title) => `
             
             // 保存设置按钮
             document.getElementById('saveSettingsBtn').addEventListener('click', saveSettings);
+
+            const settingsModal = document.getElementById('settingsModal');
+            if (settingsModal) {
+                settingsModal.addEventListener('shown.bs.modal', function() {
+                    renderPushChannelsPanel();
+                    loadVendorTemplatesFromConfig(getResolvedVendorTemplatesForUi());
+                });
+            }
             
             // 测试Telegram按钮
             document.getElementById('testTelegramBtn').addEventListener('click', testTelegram);
@@ -5719,12 +5746,15 @@ const getHTMLContent = (title) => `
             const select = document.getElementById('notifyChannelSelect');
             if (!panel || !select) return;
 
-            PUSH_CHANNEL_DEFS.forEach(function(def) {
-                const opt = document.createElement('option');
-                opt.value = def.id;
-                opt.textContent = def.name;
-                select.appendChild(opt);
-            });
+            if (!select.dataset.channelsBuilt) {
+                select.dataset.channelsBuilt = '1';
+                PUSH_CHANNEL_DEFS.forEach(function(def) {
+                    const opt = document.createElement('option');
+                    opt.value = def.id;
+                    opt.textContent = def.name;
+                    select.appendChild(opt);
+                });
+            }
 
             panel.innerHTML = PUSH_CHANNEL_DEFS.map(function(def) {
                 const fieldsHtml = def.fields.map(function(field) {
@@ -5887,10 +5917,11 @@ const getHTMLContent = (title) => `
                     document.getElementById('telegramToken').disabled = false;
                 }
 
-                loadVendorTemplatesFromConfig(telegramConfig.vendorTemplates || []);
+                loadVendorTemplatesFromConfig(getResolvedVendorTemplatesForUi());
                 loadPushChannelsFromConfig(telegramConfig.pushChannels || {});
             } catch (error) {
-                // 忽略Telegram配置加载失败
+                console.error('Telegram配置加载失败:', error);
+                loadVendorTemplatesFromConfig(getDefaultVendorTemplatesFrontend());
             }
         }
         
@@ -5906,7 +5937,14 @@ const getHTMLContent = (title) => `
             const chatId = document.getElementById('telegramChatId').value;
             const notifyDays = parseInt(document.getElementById('notifyDays').value) || 30;
             persistVendorEditorToDraft();
-            const vendorTemplates = collectVendorTemplates();
+            let vendorTemplates = collectVendorTemplates();
+            if (!vendorTemplates.length) {
+                vendorTemplates = getResolvedVendorTemplatesForUi().map(function(t) {
+                    const out = Object.assign({}, t);
+                    delete out.builtin;
+                    return out;
+                });
+            }
             
             try {
                 const response = await fetch('/api/telegram/config', {
@@ -5937,7 +5975,7 @@ const getHTMLContent = (title) => `
                 }
                 
                 telegramConfig = await response.json();
-                loadVendorTemplatesFromConfig(telegramConfig.vendorTemplates || []);
+                loadVendorTemplatesFromConfig(getResolvedVendorTemplatesForUi());
                 showAlert('success', '设置保存成功');
                 await renderDomainList();
                 
@@ -6010,7 +6048,7 @@ const getHTMLContent = (title) => `
             if (!vendor) {
                 return { available: true, daysLeft, windowDays: 0 };
             }
-            const windowDays = vendor.renewWindowDays ?? 0;
+            const windowDays = vendor.renewWindowDays != null ? vendor.renewWindowDays : 0;
             if (!windowDays || windowDays <= 0) {
                 return { available: true, daysLeft, windowDays: 0, providerId: vendor.id };
             }
@@ -6036,7 +6074,7 @@ const getHTMLContent = (title) => `
                 field.placeholder = '留空则使用厂商模板中的默认链接';
             }
             if (vendor && !field.value.trim()) {
-                const windowDays = vendor.renewWindowDays ?? 0;
+                const windowDays = vendor.renewWindowDays != null ? vendor.renewWindowDays : 0;
                 if (windowDays > 0) {
                     hintText += '；需在到期前 ' + windowDays + ' 天内方可续费';
                 }
