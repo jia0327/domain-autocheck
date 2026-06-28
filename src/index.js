@@ -3539,6 +3539,23 @@ const getHTMLContent = (title) => `
             overflow: hidden;
             color: var(--text-main);
         }
+
+        #settingsModal .nav-tabs {
+            border-bottom-color: var(--card-border-bottom);
+            flex-wrap: nowrap;
+        }
+        #settingsModal .nav-tabs .nav-link {
+            color: var(--text-muted);
+            border: none;
+            border-bottom: 2px solid transparent;
+            white-space: nowrap;
+            padding: 0.5rem 0.75rem;
+        }
+        #settingsModal .nav-tabs .nav-link.active {
+            color: var(--text-main);
+            background: transparent;
+            border-bottom-color: #3B82F6;
+        }
         
         .modal-header {
             border-bottom: 1px solid var(--card-border-bottom);
@@ -4174,6 +4191,19 @@ const getHTMLContent = (title) => `
                 </div>
                 <div class="modal-body">
                     <form id="settingsForm">
+                        <ul class="nav nav-tabs mb-3" id="settingsTabs" role="tablist">
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link active" id="settings-tab-display" data-bs-toggle="tab" data-bs-target="#settingsTabDisplay" type="button" role="tab">显示设置</button>
+                            </li>
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link" id="settings-tab-renew" data-bs-toggle="tab" data-bs-target="#settingsTabRenew" type="button" role="tab">续费链接</button>
+                            </li>
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link" id="settings-tab-notify" data-bs-toggle="tab" data-bs-target="#settingsTabNotify" type="button" role="tab">通知设置</button>
+                            </li>
+                        </ul>
+                        <div class="tab-content">
+                        <div class="tab-pane fade show active" id="settingsTabDisplay" role="tabpanel">
                         <h6 class="mb-3" style="display: flex; align-items: center; gap: 5px;"><i class="iconfont icon-monitor" style="color: white;"></i> 显示设置</h6>
                         <div class="mb-3 form-check">
                             <input type="checkbox" class="form-check-input" id="expandDomainsEnabled">
@@ -4209,8 +4239,8 @@ const getHTMLContent = (title) => `
                             </div>
                         </div>
                         
-                        <hr style="border-color: rgba(255, 255, 255, 0.1);">
-                        
+                        </div>
+                        <div class="tab-pane fade" id="settingsTabRenew" role="tabpanel">
                         <h6 class="mb-3" style="display: flex; align-items: center; gap: 5px;"><i class="iconfont icon-link" style="color: white;"></i> 默认续费链接</h6>
                         <p class="form-text mb-3">按服务商设置默认链接；在域名编辑里填写的<strong>自定义续费链接优先</strong>，留空则使用此处默认值。</p>
                         <div class="mb-3">
@@ -4259,14 +4289,17 @@ const getHTMLContent = (title) => `
                             </div>
                         </div>
                         
-                        <hr style="border-color: rgba(255, 255, 255, 0.1);">
-                        
-                        <h6 class="mb-3" style="display: flex; align-items: center; gap: 5px;"><i class="iconfont icon-telegram" style="color: white;"></i> 通知设置</h6>
-                        <div class="mb-3 form-check">
-                            <input type="checkbox" class="form-check-input" id="telegramEnabled">
-                            <label class="form-check-label" for="telegramEnabled">启用 Telegram 通知</label>
                         </div>
-                        <div id="telegramSettings" style="display: none;">
+                        <div class="tab-pane fade" id="settingsTabNotify" role="tabpanel">
+                        <div class="mb-3">
+                            <label for="notifyChannelSelect" class="form-label"><i class="iconfont icon-paper-plane"></i> 通知方式</label>
+                            <select class="form-select" id="notifyChannelSelect">
+                                <option value="">不启用</option>
+                                <option value="telegram">Telegram</option>
+                            </select>
+                            <div class="form-text">仅支持一种通知方式；密钥也可通过 Worker 环境变量配置。</div>
+                        </div>
+                        <div id="telegramNotifyFields" style="display: none;">
                             <div class="mb-3">
                                 <label for="telegramToken" class="form-label"><i class="iconfont icon-key"></i> 机器人Token</label>
                                 <input type="text" class="form-control" id="telegramToken" placeholder="如已在环境变量中配置则可留空">
@@ -4278,18 +4311,17 @@ const getHTMLContent = (title) => `
                                 <div class="form-text">可以使用@userinfobot获取个人ID，或将机器人添加到群组后获取群组ID</div>
                             </div>
                         </div>
-                        <div class="mb-3">
+                        <div id="pushChannelsPanel"></div>
+                        <div class="mb-3 mt-3">
                             <label for="notifyDays" class="form-label"><i class="iconfont icon-lingdang"></i> 提前通知天数</label>
                             <input type="number" class="form-control" id="notifyDays" min="1" max="90" value="30">
-                            <div class="form-text">域名到期前多少天开始发送通知（对所有已启用渠道生效）</div>
+                            <div class="form-text">域名到期前多少天开始发送通知</div>
                         </div>
-                        <hr style="border-color: rgba(255, 255, 255, 0.1);">
-                        <h6 class="mb-2"><i class="iconfont icon-paper-plane"></i> 多通道推送</h6>
-                        <p class="form-text mb-3">可同时启用多个渠道；密钥也可通过 Worker 环境变量配置（变量名与青龙脚本相同，如 BARK_PUSH、PUSH_KEY 等）</p>
-                        <div id="pushChannelsPanel" class="small"></div>
                         <div class="mb-3 mt-3">
                             <button type="button" class="btn btn-info" id="testTelegramBtn"><i class="iconfont icon-paper-plane" style="color: white;"></i> <span style="color: white;">测试通知</span></button>
                             <span id="testResult" class="ms-2"></span>
+                        </div>
+                        </div>
                         </div>
                     </form>
                 </div>
@@ -4734,11 +4766,6 @@ const getHTMLContent = (title) => `
             // document.getElementById('registrationDate').addEventListener('change', calculateExpiryDate);
             // document.getElementById('renewCycleValue').addEventListener('input', calculateExpiryDate);
             // document.getElementById('renewCycleUnit').addEventListener('change', calculateExpiryDate);
-            
-            // Telegram启用状态变化
-            document.getElementById('telegramEnabled').addEventListener('change', function() {
-                document.getElementById('telegramSettings').style.display = this.checked ? 'block' : 'none';
-            });
             
             // 保存设置按钮
             document.getElementById('saveSettingsBtn').addEventListener('click', saveSettings);
@@ -5301,40 +5328,72 @@ const getHTMLContent = (title) => `
 
         function renderPushChannelsPanel() {
             const panel = document.getElementById('pushChannelsPanel');
-            if (!panel) return;
+            const select = document.getElementById('notifyChannelSelect');
+            if (!panel || !select) return;
+
+            PUSH_CHANNEL_DEFS.forEach(function(def) {
+                const opt = document.createElement('option');
+                opt.value = def.id;
+                opt.textContent = def.name;
+                select.appendChild(opt);
+            });
+
             panel.innerHTML = PUSH_CHANNEL_DEFS.map(function(def) {
                 const fieldsHtml = def.fields.map(function(field) {
-                    return '<input type="text" class="form-control form-control-sm mb-1 push-field" data-channel="' + escapeHtml(def.id) + '" data-field="' + escapeHtml(field.key) + '" placeholder="' + escapeHtml(field.placeholder || field.label) + '">';
+                    return '<div class="mb-2">' +
+                        '<label class="form-label mb-1">' + escapeHtml(field.label) + '</label>' +
+                        '<input type="text" class="form-control form-control-sm push-field" data-channel="' + escapeHtml(def.id) + '" data-field="' + escapeHtml(field.key) + '" placeholder="' + escapeHtml(field.placeholder || field.label) + '">' +
+                        '</div>';
                 }).join('');
-                return '<div class="border rounded p-2 mb-2" style="border-color: rgba(255,255,255,0.12) !important;">' +
-                    '<div class="form-check form-switch mb-1">' +
-                    '<input class="form-check-input push-enabled" type="checkbox" id="pushEnabled_' + escapeHtml(def.id) + '" data-channel="' + escapeHtml(def.id) + '">' +
-                    '<label class="form-check-label" for="pushEnabled_' + escapeHtml(def.id) + '">' + escapeHtml(def.name) + '</label></div>' +
+                return '<div class="push-channel-block border rounded p-3 mb-3" data-channel="' + escapeHtml(def.id) + '" style="display:none; border-color: rgba(255,255,255,0.12) !important;">' +
                     fieldsHtml + '</div>';
             }).join('');
+
+            if (!select.dataset.inited) {
+                select.dataset.inited = '1';
+                select.addEventListener('change', showSelectedNotifyChannel);
+            }
+            showSelectedNotifyChannel();
+        }
+
+        function showSelectedNotifyChannel() {
+            const select = document.getElementById('notifyChannelSelect');
+            const id = select ? select.value : '';
+            const tgFields = document.getElementById('telegramNotifyFields');
+            if (tgFields) tgFields.style.display = id === 'telegram' ? '' : 'none';
+            document.querySelectorAll('.push-channel-block').forEach(function(el) {
+                el.style.display = el.dataset.channel === id ? '' : 'none';
+            });
         }
 
         function loadPushChannelsFromConfig(channels) {
             channels = channels || {};
-            document.querySelectorAll('.push-enabled').forEach(function(el) {
-                const id = el.dataset.channel;
-                el.checked = !!(channels[id] && channels[id].enabled);
-            });
             document.querySelectorAll('.push-field').forEach(function(el) {
                 const ch = channels[el.dataset.channel] || {};
                 el.value = ch[el.dataset.field] != null ? ch[el.dataset.field] : '';
             });
         }
 
+        function resolveNotifyChannelFromConfig(cfg) {
+            if (cfg && Object.prototype.hasOwnProperty.call(cfg, 'notifyChannel')) {
+                return cfg.notifyChannel || '';
+            }
+            if (cfg && cfg.enabled) return 'telegram';
+            const channels = cfg && cfg.pushChannels ? cfg.pushChannels : {};
+            for (let i = 0; i < PUSH_CHANNEL_DEFS.length; i++) {
+                const def = PUSH_CHANNEL_DEFS[i];
+                const ch = channels[def.id];
+                if (ch && ch.enabled) return def.id;
+            }
+            return '';
+        }
+
         function collectPushChannels() {
             const out = {};
-            document.querySelectorAll('.push-enabled').forEach(function(el) {
-                out[el.dataset.channel] = { enabled: el.checked };
-            });
             document.querySelectorAll('.push-field').forEach(function(el) {
                 const id = el.dataset.channel;
                 const field = el.dataset.field;
-                if (!out[id]) out[id] = { enabled: false };
+                if (!out[id]) out[id] = {};
                 if (el.value.trim()) out[id][field] = el.value.trim();
             });
             return out;
@@ -5369,8 +5428,11 @@ const getHTMLContent = (title) => `
                     document.getElementById('cardLayout3').checked = true;
                 }
                 
-                document.getElementById('telegramEnabled').checked = telegramConfig.enabled;
-                document.getElementById('telegramSettings').style.display = telegramConfig.enabled ? 'block' : 'none';
+                const notifySelect = document.getElementById('notifyChannelSelect');
+                if (notifySelect) {
+                    notifySelect.value = resolveNotifyChannelFromConfig(telegramConfig);
+                    showSelectedNotifyChannel();
+                }
                 document.getElementById('notifyDays').value = telegramConfig.notifyDays || 30;
                 updateDomainNotifyDaysUI();
                 if (telegramConfig.expandDomains && viewMode !== 'expand-all') {
@@ -5461,7 +5523,8 @@ const getHTMLContent = (title) => `
             const expandDomains = document.getElementById('expandDomainsEnabled').checked;
             const progressStyle = document.querySelector('input[name="progressStyle"]:checked').value;
             const cardLayout = document.querySelector('input[name="cardLayout"]:checked').value;
-            const enabled = document.getElementById('telegramEnabled').checked;
+            const notifyChannel = document.getElementById('notifyChannelSelect').value;
+            const enabled = notifyChannel === 'telegram';
             // 获取表单值，即使是空字符串也保留
             const botToken = document.getElementById('telegramToken').value;
             const chatId = document.getElementById('telegramChatId').value;
@@ -5489,6 +5552,7 @@ const getHTMLContent = (title) => `
                         expandDomains,
                         progressStyle,
                         cardLayout,
+                        notifyChannel,
                         enabled,
                         botToken,
                         chatId,
@@ -8575,14 +8639,18 @@ async function getTelegramConfig() {
     cardLayout: config.cardLayout || '4', // 返回卡片布局配置
     defaultRenewLinks: resolveDefaultRenewLinks(config.defaultRenewLinks),
     renewWindowDays: resolveRenewWindowDays(config.renewWindowDays),
+    notifyChannel: resolveNotifyChannel(config),
     pushChannels: sanitizePushChannels(config.pushChannels),
   };
 }
 
 // 保存Telegram配置
 async function saveTelegramConfig(configData) {
-  // 验证必要的配置 - 只有当启用Telegram通知且环境变量中也没有配置时才需要验证
-  if (configData.enabled) {
+  const notifyChannel = sanitizeNotifyChannel(configData.notifyChannel);
+  const enabled = notifyChannel === 'telegram';
+
+  // 验证必要的配置 - 仅当选择 Telegram 时校验
+  if (notifyChannel === 'telegram') {
     // 检查是否可以使用环境变量或用户输入的值
     // 注意：空字符串("")被视为有效的清除操作，不应该抛出错误
     const hasTokenSource = (configData.botToken !== undefined && configData.botToken !== null) || 
@@ -8602,7 +8670,8 @@ async function saveTelegramConfig(configData) {
   
   // 保存配置到KV - 即使值为空也保存，表示用户有意清除值
   const config = {
-    enabled: !!configData.enabled,
+    enabled,
+    notifyChannel,
     botToken: configData.botToken, // 可能为空字符串，表示用户清除了值
     chatId: configData.chatId, // 可能为空字符串，表示用户清除了值
     notifyDays: configData.notifyDays || 30,
@@ -8657,16 +8726,17 @@ async function saveTelegramConfig(configData) {
     cardLayout: config.cardLayout, // 返回卡片布局配置
     defaultRenewLinks: resolveDefaultRenewLinks(config.defaultRenewLinks),
     renewWindowDays: resolveRenewWindowDays(config.renewWindowDays),
+    notifyChannel: config.notifyChannel,
     pushChannels: sanitizePushChannels(config.pushChannels),
   };
 }
 
-// 测试通知（所有已启用渠道）
+// 测试通知（当前所选渠道）
 async function testTelegramNotification() {
   const config = await getTelegramConfigWithToken();
 
   if (!isAnyPushChannelConfigured(config)) {
-    throw new Error('请至少启用并配置一个通知渠道（Telegram 或其他推送）');
+    throw new Error('请先选择并配置一种通知方式');
   }
 
   const today = new Date();
@@ -8695,7 +8765,7 @@ async function testTelegramNotification() {
     '⚠️ <b>点击续期:</b> ' + escapeHtmlBackend(testRenewLink || '未设置续期链接'),
   ].join('\n');
 
-  const result = await sendNotifyAll(config, sendTelegramMessage, {
+  const result = await sendNotify(config, sendTelegramMessage, {
     title: plainTitle,
     body: bodyPlain,
     html: htmlTitle + '\n' + separator + '\n\n' + bodyHtml,
@@ -8703,8 +8773,8 @@ async function testTelegramNotification() {
 
   return {
     success: true,
-    message: `测试通知已发送（成功 ${result.sent} 个渠道${result.failed ? '，失败 ' + result.failed + ' 个' : ''}）`,
-    details: result.results.filter((r) => !r.skipped),
+    message: result.skipped ? '未启用通知' : '测试通知已发送',
+    channel: result.channel,
   };
 }
 
@@ -8751,6 +8821,7 @@ async function getTelegramConfigWithToken() {
   
   return {
     enabled: !!config.enabled,
+    notifyChannel: resolveNotifyChannel(config),
     botToken: config.botToken || '',
     chatId: config.chatId || '',
     notifyDays: config.notifyDays || 30,
@@ -9098,21 +9169,57 @@ export function resolvePushChannels(stored) {
   };
 }
 
-export function isAnyPushChannelConfigured(appConfig) {
-  if (appConfig?.enabled && appConfig?.botToken && appConfig?.chatId) return true;
-  const push = resolvePushChannels(appConfig?.pushChannels);
-  for (const id of Object.keys(push)) {
-    const item = push[id];
-    if (!item.enabled) continue;
-    if (item.value) return true;
-    if (id === 'gotify' && item.url) return true;
-    if (id === 'synologyChat' && item.url) return true;
-    if (id === 'gobot' && item.config?.url) return true;
-    if (id === 'chronocat' && item.url && item.qq) return true;
-    if (id === 'aibotk' && item.value && item.name) return true;
-    if (id === 'webhook' && item.value && item.method) return true;
-  }
+export const NOTIFY_PUSH_CHANNEL_IDS = [
+  'bark', 'serverChan', 'pushPlus', 'pushDeer', 'dingtalk', 'qywxBot', 'qywxAm', 'feishu',
+  'gotify', 'igot', 'pushMe', 'webhook', 'ntfy', 'wxPusher', 'qmsg', 'wePlusBot', 'aibotk',
+  'synologyChat', 'gobot', 'chronocat',
+];
+
+export const NOTIFY_CHANNEL_IDS = ['telegram', ...NOTIFY_PUSH_CHANNEL_IDS];
+
+export function sanitizeNotifyChannel(input) {
+  const id = trimPushStr(input, 64);
+  if (!id) return '';
+  return NOTIFY_CHANNEL_IDS.includes(id) ? id : '';
+}
+
+function hasTelegramCredentials(appConfig) {
+  const token = trimPushStr(appConfig?.botToken);
+  const chatId = trimPushStr(appConfig?.chatId);
+  return !!(token && chatId);
+}
+
+function isResolvedPushReady(id, item) {
+  if (!item) return false;
+  if (item.value) return true;
+  if (id === 'gotify' && item.url) return true;
+  if (id === 'synologyChat' && item.url) return true;
+  if (id === 'gobot' && item.config?.url) return true;
+  if (id === 'chronocat' && item.url && item.qq) return true;
+  if (id === 'aibotk' && item.value && item.name) return true;
+  if (id === 'webhook' && item.value && item.method) return true;
   return false;
+}
+
+export function resolveNotifyChannel(config) {
+  if (config && Object.prototype.hasOwnProperty.call(config, 'notifyChannel')) {
+    return sanitizeNotifyChannel(config.notifyChannel);
+  }
+  if (config?.enabled && hasTelegramCredentials(config)) return 'telegram';
+  const kv = sanitizePushChannels(config?.pushChannels);
+  const push = resolvePushChannels(config?.pushChannels);
+  for (const id of NOTIFY_PUSH_CHANNEL_IDS) {
+    if (kv[id]?.enabled && isResolvedPushReady(id, push[id])) return id;
+  }
+  return '';
+}
+
+export function isAnyPushChannelConfigured(appConfig) {
+  const channel = resolveNotifyChannel(appConfig);
+  if (!channel) return false;
+  if (channel === 'telegram') return hasTelegramCredentials(appConfig);
+  const push = resolvePushChannels(appConfig?.pushChannels);
+  return isResolvedPushReady(channel, push[channel]);
 }
 
 function parseWebhookHeaders(raw) {
@@ -9336,50 +9443,51 @@ async function pushChronocat(ch, title, body) {
   return true;
 }
 
-export async function sendNotifyAll(appConfig, sendTelegramFn, payload) {
+export async function sendNotify(appConfig, sendTelegramFn, payload) {
+  const channel = resolveNotifyChannel(appConfig);
+  if (!channel) return { skipped: true, channel: '', ok: true, sent: 0, failed: 0, results: [] };
+
   const { title, body, html } = payload;
   const textTitle = title || '';
   const textBody = body || '';
   const htmlMessage = html || `${textTitle}\n\n${textBody}`;
   const push = resolvePushChannels(appConfig.pushChannels);
-  const senders = [
-    ['telegram', async () => { if (!appConfig?.enabled) return null; await sendTelegramFn(appConfig, htmlMessage); return true; }],
-    ['bark', () => pushBark(push.bark, textTitle, textBody)],
-    ['serverChan', () => pushServerChan(push.serverChan, textTitle, textBody)],
-    ['pushPlus', () => pushPushPlus(push.pushPlus, textTitle, textBody)],
-    ['pushDeer', () => pushPushDeer(push.pushDeer, textTitle, textBody)],
-    ['dingtalk', () => pushDingtalk(push.dingtalk, textTitle, textBody)],
-    ['qywxBot', () => pushQywxBot(push.qywxBot, textTitle, textBody)],
-    ['qywxAm', () => pushQywxAm(push.qywxAm, textTitle, textBody)],
-    ['feishu', () => pushFeishu(push.feishu, textTitle, textBody)],
-    ['gotify', () => pushGotify(push.gotify, textTitle, textBody)],
-    ['igot', () => pushIgot(push.igot, textTitle, textBody)],
-    ['pushMe', () => pushPushMe(push.pushMe, textTitle, textBody)],
-    ['webhook', () => pushWebhook(push.webhook, textTitle, textBody)],
-    ['ntfy', () => pushNtfy(push.ntfy, textTitle, textBody)],
-    ['wxPusher', () => pushWxPusher(push.wxPusher, textTitle, textBody)],
-    ['qmsg', () => pushQmsg(push.qmsg, textTitle, textBody)],
-    ['wePlusBot', () => pushWePlusBot(push.wePlusBot, textTitle, textBody)],
-    ['aibotk', () => pushAibotk(push.aibotk, textTitle, textBody)],
-    ['synologyChat', () => pushSynologyChat(push.synologyChat, textTitle, textBody)],
-    ['gobot', () => pushGobot(push.gobot, textTitle, textBody)],
-    ['chronocat', () => pushChronocat(push.chronocat, textTitle, textBody)],
-  ];
-  const results = await Promise.all(senders.map(async ([channel, fn]) => {
-    try {
-      const r = await fn();
-      if (r === null) return { channel, skipped: true, ok: true };
-      return { channel, ok: true };
-    } catch (error) {
-      return { channel, ok: false, error: error.message || String(error) };
-    }
-  }));
-  const sent = results.filter((r) => r.ok && !r.skipped);
-  const failed = results.filter((r) => !r.ok);
-  if (!sent.length && failed.length) {
-    throw new Error(failed.map((f) => f.channel + ': ' + f.error).join('; '));
+  const withEnabled = (ch) => ({ ...ch, enabled: true });
+
+  const dispatch = {
+    telegram: async () => { await sendTelegramFn(appConfig, htmlMessage); return true; },
+    bark: () => pushBark(withEnabled(push.bark), textTitle, textBody),
+    serverChan: () => pushServerChan(withEnabled(push.serverChan), textTitle, textBody),
+    pushPlus: () => pushPushPlus(withEnabled(push.pushPlus), textTitle, textBody),
+    pushDeer: () => pushPushDeer(withEnabled(push.pushDeer), textTitle, textBody),
+    dingtalk: () => pushDingtalk(withEnabled(push.dingtalk), textTitle, textBody),
+    qywxBot: () => pushQywxBot(withEnabled(push.qywxBot), textTitle, textBody),
+    qywxAm: () => pushQywxAm(withEnabled(push.qywxAm), textTitle, textBody),
+    feishu: () => pushFeishu(withEnabled(push.feishu), textTitle, textBody),
+    gotify: () => pushGotify(withEnabled(push.gotify), textTitle, textBody),
+    igot: () => pushIgot(withEnabled(push.igot), textTitle, textBody),
+    pushMe: () => pushPushMe(withEnabled(push.pushMe), textTitle, textBody),
+    webhook: () => pushWebhook(withEnabled(push.webhook), textTitle, textBody),
+    ntfy: () => pushNtfy(withEnabled(push.ntfy), textTitle, textBody),
+    wxPusher: () => pushWxPusher(withEnabled(push.wxPusher), textTitle, textBody),
+    qmsg: () => pushQmsg(withEnabled(push.qmsg), textTitle, textBody),
+    wePlusBot: () => pushWePlusBot(withEnabled(push.wePlusBot), textTitle, textBody),
+    aibotk: () => pushAibotk(withEnabled(push.aibotk), textTitle, textBody),
+    synologyChat: () => pushSynologyChat(withEnabled(push.synologyChat), textTitle, textBody),
+    gobot: () => pushGobot(withEnabled(push.gobot), textTitle, textBody),
+    chronocat: () => pushChronocat(withEnabled(push.chronocat), textTitle, textBody),
+  };
+
+  const fn = dispatch[channel];
+  if (!fn) throw new Error('未知通知渠道: ' + channel);
+
+  try {
+    const r = await fn();
+    if (r === null) throw new Error('通知渠道未配置完整');
+    return { ok: true, channel, sent: 1, failed: 0, skipped: false, results: [{ channel, ok: true }] };
+  } catch (error) {
+    throw new Error(channel + ': ' + (error.message || String(error)));
   }
-  return { results, sent: sent.length, failed: failed.length };
 }
 
 // 发送Telegram消息
@@ -9505,7 +9613,7 @@ async function checkExpiringDomains() {
     }
   }
 
-  // 第三步：发送到期 / 同步通知（所有已启用渠道）
+  // 第三步：发送到期 / 同步通知（当前所选渠道）
   if (isAnyPushChannelConfigured(telegramConfig)) {
     try {
       if (expiringDomains.length > 0 || expiredDomains.length > 0) {
@@ -9546,7 +9654,7 @@ async function sendExpiringDomainsNotification(config, domains, isExpired) {
     message += appendDomainExpiryLines(domain, config, true);
   });
   
-  return await sendNotifyAll(config, sendTelegramMessage, {
+  return await sendNotify(config, sendTelegramMessage, {
     title: isExpired ? '🚫 域名已过期提醒 🚫' : '🚨 域名到期提醒 🚨',
     body: message.replace(/<[^>]+>/g, ''),
     html: message,
@@ -9604,7 +9712,7 @@ async function sendCombinedDomainsNotification(config, expiringDomains, expiredD
     ? '🚫 域名已过期提醒 🚫'
     : '🚨 域名到期提醒 🚨';
 
-  return await sendNotifyAll(config, sendTelegramMessage, {
+  return await sendNotify(config, sendTelegramMessage, {
     title,
     body: textBody.trim(),
     html: htmlBody.trim(),
@@ -9650,7 +9758,7 @@ async function sendDateUpdatedNotification(config, updatedDomains) {
     }
   });
 
-  return await sendNotifyAll(config, sendTelegramMessage, {
+  return await sendNotify(config, sendTelegramMessage, {
     title: plainTitle,
     body: textBody.trim(),
     html: htmlTitle + '\n' + separator + '\n\n' + htmlBody.trim(),

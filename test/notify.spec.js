@@ -3,6 +3,9 @@ import {
   sanitizePushChannels,
   resolvePushChannels,
   isAnyPushChannelConfigured,
+  resolveNotifyChannel,
+  sanitizeNotifyChannel,
+  NOTIFY_CHANNEL_IDS,
 } from '../src/index.js';
 
 describe('sanitizePushChannels', () => {
@@ -33,24 +36,71 @@ describe('resolvePushChannels', () => {
   });
 });
 
-describe('isAnyPushChannelConfigured', () => {
-  it('true when telegram enabled with credentials', () => {
-    expect(isAnyPushChannelConfigured({
+describe('sanitizeNotifyChannel', () => {
+  it('accepts known channel ids', () => {
+    expect(sanitizeNotifyChannel('telegram')).toBe('telegram');
+    expect(sanitizeNotifyChannel('bark')).toBe('bark');
+  });
+
+  it('rejects unknown ids', () => {
+    expect(sanitizeNotifyChannel('invalid')).toBe('');
+    expect(sanitizeNotifyChannel('')).toBe('');
+  });
+
+  it('includes telegram in channel list', () => {
+    expect(NOTIFY_CHANNEL_IDS).toContain('telegram');
+    expect(NOTIFY_CHANNEL_IDS).toContain('bark');
+  });
+});
+
+describe('resolveNotifyChannel', () => {
+  it('uses explicit notifyChannel when set', () => {
+    expect(resolveNotifyChannel({ notifyChannel: 'bark', pushChannels: {} })).toBe('bark');
+    expect(resolveNotifyChannel({ notifyChannel: '', enabled: true, botToken: 't', chatId: 'c' })).toBe('');
+  });
+
+  it('migrates legacy telegram enabled config', () => {
+    expect(resolveNotifyChannel({
       enabled: true,
+      botToken: 't',
+      chatId: 'c',
+      pushChannels: {},
+    })).toBe('telegram');
+  });
+
+  it('migrates legacy push channel enabled config', () => {
+    expect(resolveNotifyChannel({
+      enabled: false,
+      pushChannels: { bark: { enabled: true, push: 'key123' } },
+    })).toBe('bark');
+  });
+});
+
+describe('isAnyPushChannelConfigured', () => {
+  it('true when telegram is selected with credentials', () => {
+    expect(isAnyPushChannelConfigured({
+      notifyChannel: 'telegram',
       botToken: 't',
       chatId: 'c',
       pushChannels: {},
     })).toBe(true);
   });
 
-  it('true when push channel enabled with key', () => {
+  it('true when push channel is selected with key', () => {
     expect(isAnyPushChannelConfigured({
-      enabled: false,
-      pushChannels: { bark: { enabled: true, push: 'key123' } },
+      notifyChannel: 'bark',
+      pushChannels: { bark: { push: 'key123' } },
     })).toBe(true);
   });
 
-  it('false when nothing configured', () => {
-    expect(isAnyPushChannelConfigured({ enabled: false, pushChannels: {} })).toBe(false);
+  it('false when notify disabled', () => {
+    expect(isAnyPushChannelConfigured({ notifyChannel: '', pushChannels: {} })).toBe(false);
+  });
+
+  it('false when channel selected but not configured', () => {
+    expect(isAnyPushChannelConfigured({
+      notifyChannel: 'bark',
+      pushChannels: {},
+    })).toBe(false);
   });
 });
