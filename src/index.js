@@ -60,6 +60,68 @@ function formatDate(dateString) {
   return `${year}-${month}-${day}`;
 }
 
+// 格式化日期时间（年月日时分秒）
+function formatDateTime(dateString) {
+  const date = new Date(dateString);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  const hours = String(date.getHours()).padStart(2, '0');
+  const minutes = String(date.getMinutes()).padStart(2, '0');
+  const seconds = String(date.getSeconds()).padStart(2, '0');
+  return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+}
+
+// 判断注册商 WHOIS 到期日是否晚于本地记录（即已续期）
+export function isRenewalDetected(storedExpiry, whoisExpiry) {
+  if (!storedExpiry || !whoisExpiry) return false;
+  const stored = new Date(storedExpiry);
+  const remote = new Date(whoisExpiry);
+  if (Number.isNaN(stored.getTime()) || Number.isNaN(remote.getTime())) return false;
+  const storedDay = Date.UTC(stored.getFullYear(), stored.getMonth(), stored.getDate());
+  const remoteDay = Date.UTC(remote.getFullYear(), remote.getMonth(), remote.getDate());
+  return remoteDay > storedDay;
+}
+
+// 判断两个到期日是否为同一天（忽略时间部分）
+function isSameExpiryDate(storedExpiry, whoisExpiry) {
+  return formatDate(storedExpiry) === formatDate(whoisExpiry);
+}
+
+// 根据旧/新到期日推算续期周期（用于 lastRenewPeriod）
+function computeRenewPeriodFromDates(oldExpiry, newExpiry) {
+  const days = Math.round((new Date(newExpiry).getTime() - new Date(oldExpiry).getTime()) / 86400000);
+  if (days >= 360) return { value: Math.max(1, Math.round(days / 365)), unit: 'year' };
+  if (days >= 28) return { value: Math.max(1, Math.round(days / 30)), unit: 'month' };
+  return { value: Math.max(1, days), unit: 'day' };
+}
+
+// 将 WHOIS 到期日写入域名记录；若检测到续期（WHOIS 更晚）则更新 lastRenewed
+function applyExpirySyncFromWhois(record, whoisExpiry, now) {
+  const oldExpiryDate = record.expiryDate;
+  if (isSameExpiryDate(oldExpiryDate, whoisExpiry)) {
+    return { changed: false, oldExpiryDate, whoisExpiry };
+  }
+  const renewalDetected = isRenewalDetected(oldExpiryDate, whoisExpiry);
+  const updated = {
+    ...record,
+    expiryDate: whoisExpiry,
+    updatedAt: now.toISOString(),
+  };
+  if (renewalDetected) {
+    updated.lastRenewed = now.toISOString();
+    updated.lastRenewPeriod = computeRenewPeriodFromDates(oldExpiryDate, whoisExpiry);
+    if (updated.renewedFromExpired) {
+      delete updated.renewedFromExpired;
+      delete updated.renewStartDate;
+    }
+  }
+  const oldDate = new Date(oldExpiryDate);
+  const newDate = new Date(whoisExpiry);
+  const addedDays = Math.ceil((newDate.getTime() - oldDate.getTime()) / (1000 * 60 * 60 * 24));
+  return { changed: true, renewalDetected, updated, oldExpiryDate, whoisExpiry, addedDays };
+}
+
 // JSON响应工具函数
 function jsonResponse(data, status = 200) {
   return new Response(JSON.stringify(data), {
@@ -3377,35 +3439,24 @@ const getHTMLContent = (title) => `
         </div>
     </div>
     
-    <!-- 续期模态框 -->
-    <div class="modal fade" id="renewDomainModal" tabindex="-1">
+    <!-- 刷新检测到期时间模态框 -->
+    <div class="modal fade" id="syncExpiryModal" tabindex="-1">
         <div class="modal-dialog">
             <div class="modal-content">
                 <div class="modal-header">
-                    <h5 class="modal-title">域名续期</h5>
+                    <h5 class="modal-title">刷新检测到期时间</h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
                 <div class="modal-body">
-                    <p>为域名 <span id="renewModalDomainName"></span> 续期</p>
-                    <div class="mb-3">
-                        <label for="renewPeriod" class="form-label"><i class="iconfont icon-repeat"></i> 续期周期</label>
-                        <div class="input-group">
-                            <input type="number" class="form-control" id="renewPeriodValue" min="1" max="100" value="1">
-                            <select class="form-select" id="renewPeriodUnit">
-                                <option value="year" selected>年</option>
-                                <option value="month">月</option>
-                                <option value="day">日</option>
-                            </select>
-                        </div>
+                    <p>为域名 <strong id="syncExpiryDomainName"></strong> 检测到期时间</p>
+                    <div class="alert alert-info py-2 mb-3">
+                        <small><i class="iconfont icon-info"></i> 将向注册商查询 WHOIS 到期日，并与本地记录对比同步。若注册商到期日晚于本地，将自动标注续费检测时间。</small>
                     </div>
-                    <div class="mb-3">
-                        <label for="newExpiryDate" class="form-label"><i class="iconfont icon-calendar-days"></i> 新到期日期</label>
-                        <input type="date" class="form-control" id="newExpiryDate" readonly>
-                    </div>
+                    <p class="mb-0"><i class="iconfont icon-rili"></i> <strong>本地记录到期日：</strong><span id="syncExpiryStoredDate"></span></p>
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal"><i class="iconfont icon-xmark"></i> 取消</button>
-                    <button type="button" class="btn btn-success" id="confirmRenewBtn"><i class="iconfont icon-arrows-rotate"></i> 确认续期</button>
+                    <button type="button" class="btn btn-success" id="confirmSyncExpiryBtn"><i class="iconfont icon-arrows-rotate"></i> 开始检测</button>
                 </div>
             </div>
         </div>
@@ -3515,6 +3566,18 @@ const getHTMLContent = (title) => `
             const day = String(date.getDate()).padStart(2, '0');
             return year + '-' + month + '-' + day;
         }
+
+        // 格式化日期时间（keep in sync with backend formatDateTime）
+        function formatDateTime(dateString) {
+            const date = new Date(dateString);
+            const year = date.getFullYear();
+            const month = String(date.getMonth() + 1).padStart(2, '0');
+            const day = String(date.getDate()).padStart(2, '0');
+            const hours = String(date.getHours()).padStart(2, '0');
+            const minutes = String(date.getMinutes()).padStart(2, '0');
+            const seconds = String(date.getSeconds()).padStart(2, '0');
+            return year + '-' + month + '-' + day + ' ' + hours + ':' + minutes + ':' + seconds;
+        }
         
         // 页面加载完成后执行
         document.addEventListener('DOMContentLoaded', () => {
@@ -3578,8 +3641,8 @@ const getHTMLContent = (title) => `
                 });
             }
             
-            // 确认续期按钮
-            document.getElementById('confirmRenewBtn').addEventListener('click', renewDomain);
+            // 确认检测到期按钮
+            document.getElementById('confirmSyncExpiryBtn').addEventListener('click', syncDomainExpiry);
             
             // 确认删除分类按钮
             document.getElementById('confirmDeleteCategoryBtn').addEventListener('click', confirmDeleteCategory);
@@ -3611,7 +3674,7 @@ const getHTMLContent = (title) => `
             });
             
             // 添加模态框焦点管理 - 让Bootstrap自己处理aria-hidden
-            const modals = ['addDomainModal', 'categoryManageModal', 'settingsModal', 'deleteDomainModal', 'renewDomainModal', 'deleteCategoryModal'];
+            const modals = ['addDomainModal', 'categoryManageModal', 'settingsModal', 'deleteDomainModal', 'syncExpiryModal', 'deleteCategoryModal'];
             modals.forEach(modalId => {
                 const modalElement = document.getElementById(modalId);
                 if (modalElement) {
@@ -3723,10 +3786,6 @@ const getHTMLContent = (title) => `
                 // 显示清除成功提示
                 showWhoisStatus('已清除自动填充的域名信息', 'info');
             });
-            
-            // 续期值或单位变化时更新新到期日期
-            document.getElementById('renewPeriodValue').addEventListener('input', updateNewExpiryDate);
-            document.getElementById('renewPeriodUnit').addEventListener('change', updateNewExpiryDate);
             
             // 注册时间和续期周期变化时不再自动计算到期日期，解除强制关联
             // document.getElementById('registrationDate').addEventListener('change', calculateExpiryDate);
@@ -4716,7 +4775,7 @@ const getHTMLContent = (title) => `
                     
                     // 添加上次续期信息
                     if (domain.lastRenewed) {
-                        infoHtml += '<small class="text-muted d-inline-block">上次续期: ' + formatDate(domain.lastRenewed) + '</small>';
+                        infoHtml += '<small class="text-muted d-inline-block">续费检测: ' + formatDateTime(domain.lastRenewed) + '</small>';
                     }
                     
                     // 生成价格信息HTML
@@ -4798,7 +4857,7 @@ const getHTMLContent = (title) => `
                         (infoHtml ? '<div class="domain-info mb-2">' + infoHtml + '</div>' : '') +
                         '<div class="domain-actions">' +
                         '<button class="btn btn-sm btn-primary edit-domain" data-id="' + escapeHtml(domain.id) + '" title="编辑域名"><i class="iconfont icon-pencil"></i> 编辑</button>' +
-                        '<button class="btn btn-sm btn-success renew-domain" data-id="' + escapeHtml(domain.id) + '" data-name="' + escapeHtml(domain.name) + '" data-expiry="' + escapeHtml(domain.expiryDate) + '" title="续期域名"><i class="iconfont icon-arrows-rotate"></i> 续期</button>' +
+                        '<button class="btn btn-sm btn-success sync-expiry-domain" data-id="' + escapeHtml(domain.id) + '" data-name="' + escapeHtml(domain.name) + '" data-expiry="' + escapeHtml(domain.expiryDate) + '" title="刷新检测到期时间"><i class="iconfont icon-arrows-rotate"></i> 检测到期</button>' +
                         renewLinkHtml +
                         '<button class="btn btn-sm btn-danger delete-domain" data-id="' + escapeHtml(domain.id) + '" data-name="' + escapeHtml(domain.name) + '" title="删除域名"><i class="iconfont icon-shanchu"></i> 删除</button>' +
                         '</div>' +
@@ -4898,9 +4957,9 @@ const getHTMLContent = (title) => `
                         return;
                     }
 
-                    const renewBtn = e.target.closest('.renew-domain');
-                    if (renewBtn) {
-                        showRenewModal(renewBtn.dataset.id, renewBtn.dataset.name, renewBtn.dataset.expiry);
+                    const syncExpiryBtn = e.target.closest('.sync-expiry-domain');
+                    if (syncExpiryBtn) {
+                        showSyncExpiryModal(syncExpiryBtn.dataset.id, syncExpiryBtn.dataset.name, syncExpiryBtn.dataset.expiry);
                         return;
                     }
 
@@ -5142,7 +5201,7 @@ const getHTMLContent = (title) => `
                     
                     if (domain.lastRenewed) {
                         lastRenewedContainer.style.display = 'block';
-                        lastRenewedDisplay.textContent = formatDate(domain.lastRenewed);
+                        lastRenewedDisplay.textContent = formatDateTime(domain.lastRenewed);
                         lastRenewed.value = domain.lastRenewed;
                     } else {
                         lastRenewedContainer.style.display = 'none';
@@ -5208,85 +5267,56 @@ const getHTMLContent = (title) => `
                     }
                 }
                 
-                // 显示续期模态框
-                function showRenewModal(id, name, expiryDate) {
+                // 显示检测到期模态框
+                function showSyncExpiryModal(id, name, expiryDate) {
                     currentDomainId = id;
-                    document.getElementById('renewModalDomainName').textContent = name;
-                    
-                    // 获取域名的续期周期设置
-                    const domain = domains.find(d => d.id === id);
-                    if (domain && domain.renewCycle) {
-                        document.getElementById('renewPeriodValue').value = domain.renewCycle.value;
-                        document.getElementById('renewPeriodUnit').value = domain.renewCycle.unit;
-                    } else {
-                        document.getElementById('renewPeriodValue').value = 1;
-                        document.getElementById('renewPeriodUnit').value = 'year';
-                    }
-                    
-                    // 计算新的到期日期
-                    updateNewExpiryDate();
-                    
-                    const modal = new bootstrap.Modal(document.getElementById('renewDomainModal'));
+                    document.getElementById('syncExpiryDomainName').textContent = name;
+                    document.getElementById('syncExpiryStoredDate').textContent = formatDate(expiryDate);
+                    const modal = new bootstrap.Modal(document.getElementById('syncExpiryModal'));
                     modal.show();
                 }
                 
-                // 更新新到期日期
-                function updateNewExpiryDate() {
-                    const domain = domains.find(d => d.id === currentDomainId);
-                    if (!domain) return;
-                    
-                    const renewValue = parseInt(document.getElementById('renewPeriodValue').value) || 1;
-                    const renewUnit = document.getElementById('renewPeriodUnit').value;
-                    
-                    // 无论域名是否过期，都从原先的到期日期开始计算
-                    const expiryDate = new Date(domain.expiryDate);
-                    const newExpiryDate = new Date(expiryDate);
-                    
-                    // 根据选择的单位添加时间
-                    switch(renewUnit) {
-                        case 'year':
-                            newExpiryDate.setFullYear(expiryDate.getFullYear() + renewValue);
-                            break;
-                        case 'month':
-                            newExpiryDate.setMonth(expiryDate.getMonth() + renewValue);
-                            break;
-                        case 'day':
-                            newExpiryDate.setDate(expiryDate.getDate() + renewValue);
-                            break;
-                    }
-                    
-                    document.getElementById('newExpiryDate').value = newExpiryDate.toISOString().split('T')[0];
-                }
-                
-                // 续期域名
-                async function renewDomain() {
+                // 向注册商 WHOIS 查询并同步到期时间
+                async function syncDomainExpiry() {
                     if (!currentDomainId) return;
                     
-                    const renewValue = parseInt(document.getElementById('renewPeriodValue').value) || 1;
-                    const renewUnit = document.getElementById('renewPeriodUnit').value;
-                    const newExpiryDate = document.getElementById('newExpiryDate').value;
+                    const confirmBtn = document.getElementById('confirmSyncExpiryBtn');
+                    const originalText = confirmBtn.innerHTML;
+                    confirmBtn.disabled = true;
+                    confirmBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>正在查询注册商...';
                     
                     try {
-                        const response = await fetch('/api/domains/' + currentDomainId + '/renew', {
-                            headers: { 'Content-Type': 'application/json' },
+                        const response = await fetch('/api/domains/' + currentDomainId + '/sync-expiry', {
                             method: 'POST',
-                            body: JSON.stringify({ 
-                                value: renewValue, 
-                                unit: renewUnit, 
-                                newExpiryDate 
-                            })
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({})
                         });
                         
-                        if (!response.ok) throw new Error('域名续期失败');
+                        const result = await response.json();
+                        if (!response.ok) {
+                            throw new Error(result.error || '检测到期时间失败');
+                        }
                         
-                        // 关闭模态框并重新加载域名列表
-                        bootstrap.Modal.getInstance(document.getElementById('renewDomainModal')).hide();
+                        bootstrap.Modal.getInstance(document.getElementById('syncExpiryModal')).hide();
                         currentDomainId = null;
                         await loadDomains();
                         renderDomainList();
-                        showAlert('success', '域名续期成功');
+                        
+                        if (result.unchanged) {
+                            showAlert('info', '注册商到期日 ' + formatDate(result.whoisExpiry) + ' 与本地记录一致，无需更新');
+                        } else if (result.renewalDetected && result.lastRenewed) {
+                            showAlert('success',
+                                '到期日已同步为 ' + formatDate(result.expiryDate) +
+                                '（检测到续期），续费检测时间 ' + formatDateTime(result.lastRenewed));
+                        } else {
+                            showAlert('success',
+                                '到期日已同步为 ' + formatDate(result.expiryDate) + '（已修正本地记录）');
+                        }
                     } catch (error) {
-                        showAlert('danger', '域名续期失败: ' + error.message);
+                        showAlert('danger', error.message);
+                    } finally {
+                        confirmBtn.disabled = false;
+                        confirmBtn.innerHTML = originalText;
                     }
                 }
                 
@@ -6244,15 +6274,17 @@ async function handleApiRequest(request) {
     }
   }
   
-  // 域名续期
-  if (path.match(/^\/api\/domains\/[^\/]+\/renew$/) && request.method === 'POST') {
+  // 刷新检测到期时间（WHOIS 查询注册商并同步本地记录）
+  if (path.match(/^\/api\/domains\/[^\/]+\/sync-expiry$/) && request.method === 'POST') {
     const id = path.split('/')[3];
     try {
-      const renewData = await request.json();
-      const domain = await renewDomain(id, renewData);
-      return jsonResponse(domain);
+      const result = await syncDomainExpiry(id);
+      return jsonResponse({ success: true, ...result });
     } catch (error) {
-      return jsonResponse({ error: '域名续期失败' }, 400);
+      return jsonResponse({
+        error: error.message || '检测到期时间失败',
+        success: false,
+      }, 400);
     }
   }
   
@@ -6665,48 +6697,60 @@ async function deleteDomain(id) {
   return true;
 }
 
-// 域名续期
-async function renewDomain(id, renewData) {
+// 刷新检测到期时间：WHOIS 查询注册商，同步到期日到本地记录
+async function syncDomainExpiry(id) {
   const domains = await getDomains();
-  
-  // 查找域名索引
+
   const index = domains.findIndex(d => d.id === id);
   if (index === -1) {
     throw new Error('域名不存在');
   }
-  
+
+  const domain = domains[index];
+  const whoisFn = getWhoisQueryFunction(domain.name);
+  if (!whoisFn) {
+    throw new Error('该域名不支持自动查询，请通过「编辑」手动更新到期日期');
+  }
+
+  let result;
+  try {
+    result = await whoisFn(domain.name);
+  } catch (e) {
+    throw new Error('查询注册商失败: ' + (e.message || '未知错误'));
+  }
+
+  if (!result.success) {
+    throw new Error(result.error || '查询注册商失败');
+  }
+  if (result.registered === false) {
+    throw new Error('域名未注册或不存在');
+  }
+  if (!result.expiryDate) {
+    throw new Error('未能从注册商获取到期日期');
+  }
+
   const now = new Date();
-  
-      // 更新域名信息中的续期数据
-    if (!domains[index].renewCycle) {
-        domains[index].renewCycle = {
-            value: renewData.value || 1,
-            unit: renewData.unit || 'year'
-        };
-    }
-    
-    // 如果域名是已过期状态，标记为从当前时间开始的全新计算
-    if (new Date(domains[index].expiryDate) < new Date()) {
-        domains[index].renewedFromExpired = true;
-        domains[index].renewStartDate = now.toISOString(); // 记录续期开始时间（当前时间）
-    }
-  
-  // 更新到期日期和续期记录
-  domains[index] = {
-    ...domains[index],
-    expiryDate: renewData.newExpiryDate,
-    updatedAt: now.toISOString(),
-    lastRenewed: now.toISOString(), // 记录本次续期时间
-    lastRenewPeriod: {
-      value: renewData.value,
-      unit: renewData.unit
-    } // 记录本次续期周期，用于进度条计算
-  };
-  
-  // 保存到KV
+  const syncResult = applyExpirySyncFromWhois(domains[index], result.expiryDate, now);
+
+  if (!syncResult.changed) {
+    return {
+      ...domains[index],
+      unchanged: true,
+      whoisExpiry: syncResult.whoisExpiry,
+      oldExpiryDate: syncResult.oldExpiryDate,
+    };
+  }
+
+  domains[index] = syncResult.updated;
   await DOMAIN_MONITOR.put('domains', JSON.stringify(domains));
-  
-  return domains[index];
+
+  return {
+    ...domains[index],
+    oldExpiryDate: syncResult.oldExpiryDate,
+    whoisExpiry: syncResult.whoisExpiry,
+    renewalDetected: syncResult.renewalDetected,
+    addedDays: syncResult.addedDays,
+  };
 }
 
 // 获取Telegram配置
@@ -7155,16 +7199,54 @@ async function sendTelegramMessage(config, message) {
   return await response.json();
 }
 
-// 设置定时任务，检查即将到期的域名并发送通知（支持WHOIS自动查询更新到期日期）
+// 设置定时任务：WHOIS 同步续期记录 + 到期提醒通知
 async function checkExpiringDomains() {
   const domains = await getDomains();
   const today = new Date();
-  
-  // 获取Telegram配置
+  const now = new Date();
+
   const telegramConfig = await getTelegramConfigWithToken();
   const globalNotifyDays = telegramConfig.enabled ? telegramConfig.notifyDays : 30;
-  
-  // 判断域名是否符合过期提醒条件的辅助函数
+
+  // 第一步：对所有支持 WHOIS 的域名检测到期时间并同步本地记录
+  const updatedDomains = [];
+  let kvNeedUpdate = false;
+
+  for (const domain of domains) {
+    const whoisFn = getWhoisQueryFunction(domain.name);
+    if (!whoisFn) continue;
+
+    try {
+      const result = await whoisFn(domain.name);
+      if (!result.success || !result.expiryDate) continue;
+
+      const idx = domains.findIndex(d => d.id === domain.id);
+      if (idx === -1) continue;
+
+      const syncResult = applyExpirySyncFromWhois(domains[idx], result.expiryDate, now);
+      if (!syncResult.changed) continue;
+
+      domains[idx] = syncResult.updated;
+      kvNeedUpdate = true;
+
+      updatedDomains.push({
+        ...domains[idx],
+        oldExpiryDate: syncResult.oldExpiryDate,
+        newExpiryDate: syncResult.whoisExpiry,
+        addedDays: syncResult.addedDays,
+        renewalDetected: syncResult.renewalDetected,
+        syncedAt: now.toISOString(),
+      });
+    } catch (e) {
+      // WHOIS 查询失败，跳过该域名
+    }
+  }
+
+  if (kvNeedUpdate) {
+    await DOMAIN_MONITOR.put('domains', JSON.stringify(domains));
+  }
+
+  // 第二步：筛选即将到期 / 已过期域名并发送提醒
   function needsExpiryNotify(domain) {
     const expiryDate = new Date(domain.expiryDate);
     const daysLeft = Math.ceil((expiryDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
@@ -7172,101 +7254,34 @@ async function checkExpiringDomains() {
     const notifyDays = notifySettings.useGlobalSettings ? globalNotifyDays : notifySettings.notifyDays;
     return notifySettings.enabled && (daysLeft <= 0 || (daysLeft > 0 && daysLeft <= notifyDays));
   }
-  
-  // 第一步：筛选出所有符合过期提醒条件的域名
-  const domainsToCheck = domains.filter(domain => needsExpiryNotify(domain));
-  
-  // 第二步：遍历待通知域名，进行WHOIS查询并分组
-  const expiringDomains = [];   // 即将到期（剩余天数 > 0）
-  const expiredDomains = [];    // 已过期（剩余天数 <= 0）
-  const updatedDomains = [];    // 到期日期已自动更新（更新后不再符合过期提醒条件）
-  let kvNeedUpdate = false;
-  
-  for (const domain of domainsToCheck) {
-    const whoisFn = getWhoisQueryFunction(domain.name);
-    let currentExpiryDate = domain.expiryDate;
-    let dateChanged = false;
-    let oldExpiryDate = null;
-    
-    // 如果支持WHOIS查询，尝试获取最新到期日期
-    if (whoisFn) {
-      try {
-        const result = await whoisFn(domain.name);
-        if (result.success && result.expiryDate && result.expiryDate !== domain.expiryDate) {
-          // 到期日期有变化，记录旧日期并更新
-          oldExpiryDate = domain.expiryDate;
-          currentExpiryDate = result.expiryDate;
-          dateChanged = true;
-          
-          // 更新domains数组中对应域名的到期日期
-          const idx = domains.findIndex(d => d.id === domain.id);
-          if (idx !== -1) {
-            domains[idx].expiryDate = currentExpiryDate;
-            domains[idx].updatedAt = new Date().toISOString();
-          }
-          kvNeedUpdate = true;
-        }
-      } catch (e) {
-        // WHOIS查询失败，静默跳过，使用原有到期日期继续判断
-      }
-    }
-    
-    if (dateChanged) {
-      // 到期日期有变化，用新日期二次判断是否仍符合过期提醒条件
-      const updatedDomain = { ...domain, expiryDate: currentExpiryDate };
-      if (needsExpiryNotify(updatedDomain)) {
-        // 更新后仍符合过期提醒条件，放入过期提醒组
-        const expiryDate = new Date(currentExpiryDate);
-        const daysLeft = Math.ceil((expiryDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
-        if (daysLeft <= 0) {
-          expiredDomains.push(updatedDomain);
-        } else {
-          expiringDomains.push(updatedDomain);
-        }
-      } else {
-        // 更新后不再符合过期提醒条件，放入日期自动更新组
-        const oldDate = new Date(oldExpiryDate);
-        const newDate = new Date(currentExpiryDate);
-        const addedDays = Math.ceil((newDate.getTime() - oldDate.getTime()) / (1000 * 60 * 60 * 24));
-        updatedDomains.push({
-          ...domain,
-          oldExpiryDate: oldExpiryDate,
-          newExpiryDate: currentExpiryDate,
-          addedDays: addedDays
-        });
-      }
+
+  const expiringDomains = [];
+  const expiredDomains = [];
+
+  for (const domain of domains) {
+    if (!needsExpiryNotify(domain)) continue;
+    const expiryDate = new Date(domain.expiryDate);
+    const daysLeft = Math.ceil((expiryDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+    if (daysLeft <= 0) {
+      expiredDomains.push(domain);
     } else {
-      // 到期日期无变化或不支持WHOIS查询，按原有逻辑分组
-      const expiryDate = new Date(currentExpiryDate);
-      const daysLeft = Math.ceil((expiryDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
-      if (daysLeft <= 0) {
-        expiredDomains.push(domain);
-      } else {
-        expiringDomains.push(domain);
-      }
+      expiringDomains.push(domain);
     }
   }
-  
-  // 第三步：批量更新KV（所有到期日期有变化的域名一次性写入）
-  if (kvNeedUpdate) {
-    await DOMAIN_MONITOR.put('domains', JSON.stringify(domains));
-  }
-  
-  // 第四步：发送Telegram通知
-  if (telegramConfig.enabled && 
-      ((telegramConfig.botToken || typeof TG_TOKEN !== 'undefined') && 
+
+  // 第三步：发送 Telegram 通知
+  if (telegramConfig.enabled &&
+      ((telegramConfig.botToken || typeof TG_TOKEN !== 'undefined') &&
        (telegramConfig.chatId || typeof TG_ID !== 'undefined'))) {
     try {
-      // 发送过期提醒通知
       if (expiringDomains.length > 0 || expiredDomains.length > 0) {
         await sendCombinedDomainsNotification(telegramConfig, expiringDomains, expiredDomains);
       }
-      // 发送域名到期日期自动更新通知
       if (updatedDomains.length > 0) {
         await sendDateUpdatedNotification(telegramConfig, updatedDomains);
       }
     } catch (error) {
-      // 静默处理Telegram通知发送失败
+      // 静默处理 Telegram 通知发送失败
     }
   }
 }
@@ -7408,7 +7423,7 @@ async function sendCombinedDomainsNotification(config, expiringDomains, expiredD
 async function sendDateUpdatedNotification(config, updatedDomains) {
   if (updatedDomains.length === 0) return;
   
-  const title = '🔄 <b>域名到期日期自动更新</b> 🔄';
+  const title = '🔄 <b>域名到期时间已自动同步</b> 🔄';
   const separator = '======================';
   
   let message = title + '\n' + separator + '\n\n';
@@ -7427,7 +7442,12 @@ async function sendDateUpdatedNotification(config, updatedDomains) {
     }
     message += '📅 原到期日期: ' + formatDate(domain.oldExpiryDate) + '\n';
     message += '📅 新到期日期: ' + formatDate(domain.newExpiryDate) + '\n';
-    message += '📈 续期增加: ' + domain.addedDays + ' 天\n';
+    message += '📈 变化天数: ' + (domain.addedDays >= 0 ? '+' : '') + domain.addedDays + ' 天\n';
+    if (domain.renewalDetected && (domain.syncedAt || domain.lastRenewed)) {
+      message += '🕐 续费检测时间: ' + formatDateTime(domain.syncedAt || domain.lastRenewed) + '\n';
+    } else if (domain.syncedAt) {
+      message += '🕐 同步时间: ' + formatDateTime(domain.syncedAt) + '\n';
+    }
   });
   
   return await sendTelegramMessage(config, message);
