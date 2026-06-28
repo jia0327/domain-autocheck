@@ -66,9 +66,10 @@ const ICONFONT_CSS = '//at.alicdn.com/t/c/font_4973034_1qunj5fctpb.css';
 const ICONFONT_JS = '//at.alicdn.com/t/c/font_4973034_1qunj5fctpb.js';
 
 // 网站图标和背景图片
-const DEFAULT_LOGO = 'https://cdn.jsdelivr.net/gh/jy02739244/Domain-AutoCheck@main/img/logo.png'; // 默认logo，外置变量为LOGO_URL
-const DEFAULT_BACKGROUND = 'https://cdn.jsdelivr.net/gh/jy02739244/Domain-AutoCheck@main/img/background.png'; // 默认背景，外置变量为BACKGROUND_URL
-const DEFAULT_MOBILE_BACKGROUND = 'https://cdn.jsdelivr.net/gh/jy02739244/Domain-AutoCheck@main/img/mobile.webp'; // 默认移动端背景，外置变量为MOBILE_BACKGROUND_URL
+const DEFAULT_LOGO = 'https://cdn.jsdelivr.net/gh/cf-fork-div/domain-autocheck@main/img/logo.png'; // 默认logo，外置变量为LOGO_URL
+const DEFAULT_BACKGROUND = 'https://cdn.jsdelivr.net/gh/cf-fork-div/domain-autocheck@main/img/background.png'; // 默认背景，外置变量为BACKGROUND_URL
+const DEFAULT_MOBILE_BACKGROUND = 'https://cdn.jsdelivr.net/gh/cf-fork-div/domain-autocheck@main/img/mobile.webp'; // 默认移动端背景，外置变量为MOBILE_BACKGROUND_URL
+const GITHUB_REPO_URL = 'https://github.com/cf-fork-div/domain-autocheck';
 
 // 登录密码设置
 const DEFAULT_TOKEN = ''; // 默认密码，留空则使用'domain'，外置变量为TOKEN
@@ -2339,7 +2340,7 @@ const getLoginHTML = (title) => `
     </style>
 </head>
 <body>
-    <a href="https://slink.661388.xyz/domain-autocheck" target="_blank" class="github-corner" title="GitHub Repository">
+    <a href="${GITHUB_REPO_URL}" target="_blank" class="github-corner" title="GitHub Repository">
         <i class="iconfont icon-github1"></i>
     </a>
     <div class="login-container">
@@ -10159,7 +10160,7 @@ function addCopyrightFooter(html) {
   // 页脚图标颜色（使用CSS颜色值，如：#4e54c8、blue、rgba(0,0,0,0.7)等）
   const footerIconColor = 'white';
   
-  const footerContent = `<span style="color: var(--text-muted);">Copyright © 2025</span> &nbsp;|&nbsp; <i class="iconfont icon-github" style="font-size: ${footerIconSize}; color: var(--text-muted);"></i><a href="https://slink.661388.xyz/domain-autocheck" target="_blank" style="color: var(--text-main); text-decoration: none;">GitHub Repository</a> &nbsp;`;
+  const footerContent = `<span style="color: var(--text-muted);">Copyright © 2026</span> &nbsp;|&nbsp; <i class="iconfont icon-github" style="font-size: ${footerIconSize}; color: var(--text-muted);"></i><a href="${GITHUB_REPO_URL}" target="_blank" style="color: var(--text-main); text-decoration: none;">GitHub Repository</a> &nbsp;`;
   
   const bodyEndIndex = html.lastIndexOf('</body>');
   
